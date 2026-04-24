@@ -12,6 +12,15 @@ Tipi di kind:
 
 ---
 
+## [2026-04-24] init | scripts/briefing.js — scaffold (v0.1)
+- Implementati step 1-5 e 7 della skill pulp-briefing come script Node standalone
+- Query su Turso: `daily_snapshot` aggregates + post del periodo con ultimo `post_snapshot`
+- Output markdown in `reports/briefing-YYYY-MM-DD-Nd.md` con sezioni: Headline, Numeri, Hero, Sotto-media, Pattern per media_type, Azioni, Note di metodo
+- Step 6 (brand voice / narrative synthesis) lasciato come placeholder `_[...]_` → richiede LLM call, rimandato a iterazione successiva
+- CLI: `npm run briefing [-- --period=7d|14d|30d|90d] [--output=file|stdout]`
+- Primo briefing reale generato: `reports/briefing-2026-04-24-7d.md`. Sample piccolo (1 daily_snapshot) produce ER distorto (12.1%) perché reach basso — diventerà robusto con più giorni accumulati
+- run_log kind='briefing' per telemetria
+
 ## [2026-04-24] refactor | UI tooltip contestuali (InfoTip)
 - Component `InfoTip` in App.jsx — piccolo (i) hoverabile, popover glass
 - Tooltip su: DeltaPill (spiega "vs prec."), tier pill, hero KPI label (Followers/Seguiti/Reach/Engagement), SummaryRow (Account coinvolti, Interazioni totali, Profile views, Website clicks)

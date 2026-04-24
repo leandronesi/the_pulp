@@ -12,6 +12,7 @@ Lista viva. Aggiornata ad ogni sessione. Quello che è `[x]` non serve più disc
 
 ## ✅ Done (recente → vecchio)
 
+- [~] `scripts/briefing.js` v0.1 scaffold — [reports/briefing-2026-04-24-7d.md](reports/briefing-2026-04-24-7d.md) primo test. LLM narrative ancora da integrare
 - [x] Tooltip contestuali (InfoTip) su KPI/pill/sintesi — [wiki/log.md](wiki/log.md) 2026-04-24
 - [x] Dashboard arricchito: tier pill, sparkline per post, follower trend — [wiki/log.md](wiki/log.md) 2026-04-24
 - [x] Dashboard + skill + wiki pattern Karpathy consolidato — [wiki/log.md](wiki/log.md) 2026-04-24
@@ -35,10 +36,11 @@ Lista viva. Aggiornata ad ogni sessione. Quello che è `[x]` non serve più disc
 - [ ] Salvare draft in `reports/briefing-YYYY-MM-DD.md` + log entry in wiki
 
 ### 2. `scripts/briefing.js`
-- [ ] Estrarre le query dalla skill in funzioni Node riusabili
-- [ ] CLI: `npm run briefing -- --period weekly --output file|stdout`
-- [ ] Output markdown in `reports/`
-- [ ] Run_log entry kind='briefing'
+- [x] Estrarre le query dalla skill in funzioni Node riusabili
+- [x] CLI: `npm run briefing -- --period=7d|14d|30d|90d --output=file|stdout`
+- [x] Output markdown in `reports/`
+- [x] Run_log entry kind='briefing'
+- [ ] **LLM narrative** — integrare Anthropic SDK per compilare sezioni `_[placeholder]_` (Headline, analisi hero/bottom, Azioni). Legge `.claude/skills/pulp-briefing/references/brand-context.md` come system prompt, usa Claude Opus 4.7
 
 ### 3. Delivery briefing via Gmail MCP
 - [ ] Workflow cron lun 8:00 IT che genera briefing + lo invia

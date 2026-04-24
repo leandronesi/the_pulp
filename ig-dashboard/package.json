@@ -10,7 +10,8 @@
     "init-db": "node --env-file-if-exists=.env scripts/init-db.js",
     "snapshot": "node --env-file-if-exists=.env scripts/snapshot.js",
     "snapshot:fresh": "node --env-file-if-exists=.env scripts/snapshot.js --fresh-only",
-    "export-json": "node --env-file-if-exists=.env scripts/export-json.js"
+    "export-json": "node --env-file-if-exists=.env scripts/export-json.js",
+    "briefing": "node --env-file-if-exists=.env scripts/briefing.js"
   },
   "dependencies": {
     "@libsql/client": "^0.17.3",

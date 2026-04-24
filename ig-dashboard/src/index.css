@@ -5,3 +5,153 @@
 body {
   margin: 0;
 }
+
+/* ─── react-day-picker · brand Pulp ──────────────────────────────────────
+   Override del CSS di default per allineare il calendar al tema editoriale
+   green foresta + cream del dashboard. Variabili RDP customizzate e overrides
+   mirati per il selected range, gli hover e il grid.
+*/
+.pulp-calendar .rdp-root {
+  --rdp-accent-color: #ede5d0;
+  --rdp-accent-background-color: rgba(237, 229, 208, 0.15);
+  --rdp-day_button-border-radius: 9999px;
+  --rdp-day-width: 38px;
+  --rdp-day-height: 38px;
+  --rdp-day_button-width: 38px;
+  --rdp-day_button-height: 38px;
+  --rdp-nav_button-width: 32px;
+  --rdp-nav_button-height: 32px;
+  --rdp-outside-opacity: 0.25;
+  --rdp-weekday-opacity: 0.5;
+  --rdp-weekday-text-transform: uppercase;
+  --rdp-months-gap: 1.5rem;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: "JetBrains Mono", monospace;
+}
+
+.pulp-calendar .rdp-month_caption {
+  font-family: "Fraunces", serif;
+  font-size: 1.1rem;
+  font-weight: 300;
+  letter-spacing: 0.01em;
+  color: #ede5d0;
+  text-transform: capitalize;
+  padding: 0 0.25rem;
+}
+
+.pulp-calendar .rdp-weekday {
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  color: rgba(237, 229, 208, 0.5);
+  padding: 0.5rem 0 0.25rem;
+}
+
+.pulp-calendar .rdp-nav button {
+  background: transparent;
+  color: rgba(237, 229, 208, 0.7);
+  border: 1px solid rgba(237, 229, 208, 0.1);
+  border-radius: 9999px;
+  transition: all 0.2s;
+}
+.pulp-calendar .rdp-nav button:hover {
+  background: rgba(237, 229, 208, 0.1);
+  color: #ede5d0;
+  border-color: rgba(237, 229, 208, 0.3);
+}
+.pulp-calendar .rdp-nav button:disabled {
+  opacity: 0.2;
+  cursor: not-allowed;
+}
+.pulp-calendar .rdp-nav button[disabled]:hover {
+  background: transparent;
+}
+
+/* Giorni normali */
+.pulp-calendar .rdp-day_button {
+  font-size: 0.75rem;
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(255, 255, 255, 0.85);
+  transition: all 0.15s;
+}
+.pulp-calendar .rdp-day_button:hover:not([disabled]) {
+  background: rgba(237, 229, 208, 0.1);
+  border-color: rgba(237, 229, 208, 0.2);
+}
+.pulp-calendar .rdp-day_button:focus-visible {
+  outline: 2px solid rgba(237, 229, 208, 0.5);
+  outline-offset: 2px;
+}
+
+/* Oggi — piccolo dot sotto */
+.pulp-calendar .rdp-today:not(.rdp-selected) .rdp-day_button {
+  color: #ede5d0;
+  position: relative;
+}
+.pulp-calendar .rdp-today:not(.rdp-selected) .rdp-day_button::after {
+  content: "";
+  position: absolute;
+  bottom: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 3px;
+  height: 3px;
+  border-radius: 9999px;
+  background: #ede5d0;
+}
+
+/* Range — estremi */
+.pulp-calendar .rdp-range_start .rdp-day_button,
+.pulp-calendar .rdp-range_end .rdp-day_button {
+  background: #ede5d0;
+  color: #0b3a30;
+  font-weight: 700;
+  border-color: #ede5d0;
+}
+
+/* Range — giorni intermedi */
+.pulp-calendar .rdp-range_middle .rdp-day_button {
+  background: rgba(237, 229, 208, 0.18);
+  color: #ede5d0;
+  border-color: transparent;
+  border-radius: 0;
+}
+
+.pulp-calendar .rdp-range_start:not(.rdp-range_end) .rdp-day_button {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.pulp-calendar .rdp-range_end:not(.rdp-range_start) .rdp-day_button {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+/* Giorni disabilitati (futuro) */
+.pulp-calendar .rdp-disabled .rdp-day_button {
+  color: rgba(255, 255, 255, 0.2);
+  cursor: not-allowed;
+}
+.pulp-calendar .rdp-disabled .rdp-day_button:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+/* Outside days (mese precedente/successivo) */
+.pulp-calendar .rdp-outside .rdp-day_button {
+  color: rgba(255, 255, 255, 0.25);
+}
+
+/* Chevron custom size */
+.pulp-calendar .rdp-chevron {
+  fill: currentColor;
+  width: 14px;
+  height: 14px;
+}
+
+/* Tabella padding fine-tune */
+.pulp-calendar .rdp-month_grid {
+  border-collapse: separate;
+  border-spacing: 1px;
+}

@@ -12,6 +12,22 @@ Tipi di kind:
 
 ---
 
+## [2026-04-24] fix | Date picker rebuild: Radix Popover + react-day-picker (stile brand)
+- Il primo tentativo era un popover custom `position: absolute z-50` che veniva coperto dai KpiCard (stacking context con `overflow-hidden`) + native date inputs brutti. Consigliato dall'utente: "non posso credere che t'hanno consigliato sta merda" — fair.
+- Rebuild usando le skill installate:
+  - **@radix-ui/react-popover**: portal su document.body → zero stacking, collision detection, auto-flip. Trigger è asChild sul bottone custom
+  - **react-day-picker** v9: calendar range con `mode="range"`, locale `it` da date-fns, `weekStartsOn={1}` (lunedì), `disabled={{after: new Date()}}` (niente date future)
+  - `numberOfMonths={1}` per compattezza
+- Styling brand-specifico via classe `.pulp-calendar` in [src/index.css](../ig-dashboard/src/index.css):
+  - Background gradient verde foresta, border cream soft
+  - Font header "Fraunces" italico per il mese, "JetBrains Mono" per i numeri (coerente col resto del dashboard)
+  - Giorno selected: cream pieno #EDE5D0 con testo verde scuro. Range middle: cream 18% opacity senza border-radius. Today: dot cream sotto
+  - Nav button glass con hover cream
+  - Giorni futuri disabilitati con opacity 20%
+- Popover container: gradient glass verde (non più glass generica) + arrow Radix che punta al trigger
+- Header del popover in display-font: "scegli un periodo" italico + sub "clicca due date per definire il range" + contatore giorni dinamico nella top-right
+- Bundle size +100KB (react-day-picker + Popover), prezzo accettabile per fixare UX rotta
+
 ## [2026-04-24] feat | Date picker custom + state refactor
 - State `dateRange` (int) → `selection` (oggetto: preset o customFrom/customTo)
 - Derivati via useMemo: `days`, `sinceUnix`, `untilUnix` — single source of truth. useEffect watcha sinceUnix/untilUnix

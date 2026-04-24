@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import * as RTooltip from "@radix-ui/react-tooltip";
+import * as Popover from "@radix-ui/react-popover";
+import { DayPicker } from "react-day-picker";
+import { it } from "date-fns/locale";
+import "react-day-picker/dist/style.css";
 import {
   XAxis,
   YAxis,
@@ -1261,6 +1265,10 @@ function InfoTip({ text, side = "top" }) {
   );
 }
 
+// DateRangeSelector — presets + range calendar via Radix Popover + react-day-picker.
+// Radix Popover rende in portal con collision detection (zero z-index drama).
+// Calendar stilato nel brand Pulp: Fraunces per mese, JetBrains Mono per numeri,
+// cream come selected, verde per hover. Locale italiano.
 function DateRangeSelector({
   selection,
   isCustom,
@@ -1273,28 +1281,25 @@ function DateRangeSelector({
   sinceUnix,
   untilUnix,
 }) {
-  const toIso = (unix) => {
-    const d = new Date(unix * 1000);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
-  };
+  const [draftRange, setDraftRange] = useState(() => ({
+    from: new Date(sinceUnix * 1000),
+    to: new Date(untilUnix * 1000),
+  }));
 
-  const [draftFrom, setDraftFrom] = useState(toIso(sinceUnix));
-  const [draftTo, setDraftTo] = useState(toIso(untilUnix));
-
-  // Quando il selection cambia da fuori, aggiorna i draft
   useEffect(() => {
-    setDraftFrom(toIso(sinceUnix));
-    setDraftTo(toIso(untilUnix));
-  }, [sinceUnix, untilUnix]);
+    if (customOpen) {
+      setDraftRange({
+        from: new Date(sinceUnix * 1000),
+        to: new Date(untilUnix * 1000),
+      });
+    }
+  }, [customOpen, sinceUnix, untilUnix]);
 
   const applyCustom = () => {
-    const f = new Date(draftFrom + "T00:00:00");
-    const t = new Date(draftTo + "T23:59:59");
-    if (!isNaN(f) && !isNaN(t) && f < t) {
-      onCustom(f, t);
+    if (draftRange?.from && draftRange?.to && draftRange.from < draftRange.to) {
+      const t = new Date(draftRange.to);
+      t.setHours(23, 59, 59, 0);
+      onCustom(draftRange.from, t);
       setCustomOpen(false);
     }
   };
@@ -1309,94 +1314,124 @@ function DateRangeSelector({
       })}`
     : "custom";
 
-  return (
-    <div className="relative">
-      <div className="glass rounded-full px-2 py-1 flex items-center gap-1">
-        {[7, 30, 90].map((d) => {
-          const active = !isCustom && selection.preset === d;
-          return (
-            <button
-              key={d}
-              onClick={() => onPreset(d)}
-              className={`px-3 py-1.5 text-xs rounded-full transition mono-font ${
-                active
-                  ? "bg-[#EDE5D0] text-[#0B3A30] font-semibold"
-                  : "text-white/60 hover:text-white"
-              }`}
-            >
-              {d}d
-            </button>
-          );
-        })}
-        <button
-          onClick={() => !staticMode && setCustomOpen(!customOpen)}
-          disabled={staticMode}
-          className={`px-3 py-1.5 text-xs rounded-full transition mono-font flex items-center gap-1.5 ${
-            isCustom
-              ? "bg-[#EDE5D0] text-[#0B3A30] font-semibold"
-              : staticMode
-              ? "text-white/20 cursor-not-allowed"
-              : "text-white/60 hover:text-white"
-          }`}
-          title={
-            staticMode
-              ? "Custom disponibile solo in dev (il sito pubblico ha solo 7/30/90 pre-calcolati)"
-              : "Scegli date custom"
-          }
-        >
-          <Calendar size={11} />
-          {customLabel}
-        </button>
-      </div>
+  const draftDays =
+    draftRange?.from && draftRange?.to
+      ? Math.max(
+          1,
+          Math.round(
+            (draftRange.to.getTime() - draftRange.from.getTime()) / 86400000
+          )
+        )
+      : 0;
 
-      {customOpen && !staticMode && (
-        <div className="absolute right-0 mt-2 glass rounded-2xl p-4 z-50 min-w-[280px] shadow-2xl">
-          <div className="text-[10px] mono-font uppercase tracking-wider text-[#EDE5D0]/70 mb-3">
-            Custom range
-          </div>
-          <div className="flex flex-col gap-3 text-xs mono-font">
-            <label className="flex flex-col gap-1 text-white/60">
-              <span>da</span>
-              <input
-                type="date"
-                value={draftFrom}
-                onChange={(e) => setDraftFrom(e.target.value)}
-                max={draftTo}
-                className="bg-black/20 rounded-lg px-2 py-1.5 text-white border border-white/10 outline-none focus:border-[#EDE5D0]/40"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-white/60">
-              <span>a</span>
-              <input
-                type="date"
-                value={draftTo}
-                onChange={(e) => setDraftTo(e.target.value)}
-                min={draftFrom}
-                max={toIso(Math.floor(Date.now() / 1000))}
-                className="bg-black/20 rounded-lg px-2 py-1.5 text-white border border-white/10 outline-none focus:border-[#EDE5D0]/40"
-              />
-            </label>
-            <div className="flex items-center gap-2 mt-2">
-              <button
-                onClick={applyCustom}
-                className="flex-1 bg-[#EDE5D0] text-[#0B3A30] rounded-full px-3 py-1.5 text-xs font-semibold hover:bg-white transition"
-              >
-                applica
-              </button>
+  return (
+    <div className="glass rounded-full px-2 py-1 flex items-center gap-1">
+      {[7, 30, 90].map((d) => {
+        const active = !isCustom && selection.preset === d;
+        return (
+          <button
+            key={d}
+            onClick={() => onPreset(d)}
+            className={`px-3 py-1.5 text-xs rounded-full transition mono-font ${
+              active
+                ? "bg-[#EDE5D0] text-[#0B3A30] font-semibold"
+                : "text-white/60 hover:text-white"
+            }`}
+          >
+            {d}d
+          </button>
+        );
+      })}
+      <Popover.Root
+        open={customOpen && !staticMode}
+        onOpenChange={staticMode ? undefined : setCustomOpen}
+      >
+        <Popover.Trigger asChild>
+          <button
+            disabled={staticMode}
+            title={
+              staticMode
+                ? "Range custom disponibile solo in dev (il sito pubblico ha solo 7/30/90 pre-calcolati)"
+                : undefined
+            }
+            className={`px-3 py-1.5 text-xs rounded-full transition mono-font flex items-center gap-1.5 ${
+              isCustom
+                ? "bg-[#EDE5D0] text-[#0B3A30] font-semibold"
+                : staticMode
+                ? "text-white/20 cursor-not-allowed"
+                : "text-white/60 hover:text-white"
+            }`}
+          >
+            <Calendar size={11} />
+            {customLabel}
+          </button>
+        </Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Content
+            sideOffset={10}
+            align="end"
+            collisionPadding={16}
+            className="z-[100] rounded-3xl p-5 shadow-2xl pulp-calendar"
+            style={{
+              background:
+                "linear-gradient(180deg, rgba(22,79,63,0.98) 0%, rgba(11,58,48,0.98) 100%)",
+              border: "1px solid rgba(237,229,208,0.15)",
+              backdropFilter: "blur(24px)",
+            }}
+          >
+            <div className="flex items-baseline justify-between mb-4">
+              <div>
+                <div className="display-font text-xl text-white italic">
+                  scegli un periodo
+                </div>
+                <div className="text-[10px] mono-font text-white/50 mt-1">
+                  clicca due date per definire il range
+                </div>
+              </div>
+              {draftDays > 0 && (
+                <div className="text-[11px] mono-font text-[#EDE5D0]">
+                  {draftDays} {draftDays === 1 ? "giorno" : "giorni"}
+                </div>
+              )}
+            </div>
+
+            <DayPicker
+              mode="range"
+              selected={draftRange}
+              onSelect={setDraftRange}
+              numberOfMonths={1}
+              locale={it}
+              weekStartsOn={1}
+              disabled={{ after: new Date() }}
+              showOutsideDays
+            />
+
+            <div className="flex items-center gap-2 mt-4 pt-4 border-t border-white/5">
               <button
                 onClick={() => setCustomOpen(false)}
-                className="text-white/60 hover:text-white px-3 py-1.5 text-xs transition"
+                className="text-white/50 hover:text-white text-xs mono-font transition"
               >
                 annulla
               </button>
+              <div className="flex-1" />
+              <button
+                onClick={applyCustom}
+                disabled={
+                  !(
+                    draftRange?.from &&
+                    draftRange?.to &&
+                    draftRange.from < draftRange.to
+                  )
+                }
+                className="bg-[#EDE5D0] text-[#0B3A30] rounded-full px-4 py-1.5 text-xs font-semibold mono-font hover:bg-white transition disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                applica
+              </button>
             </div>
-            <p className="text-[9px] text-white/40 mono-font leading-relaxed">
-              ~{Math.round((new Date(draftTo) - new Date(draftFrom)) / 86400000)}{" "}
-              giorni · confronto col periodo prec. di pari durata
-            </p>
-          </div>
-        </div>
-      )}
+            <Popover.Arrow className="fill-[#0B3A30]" width={14} height={7} />
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
     </div>
   );
 }

@@ -12,6 +12,12 @@ Tipi di kind:
 
 ---
 
+## [2026-04-24] refactor | UI tooltip contestuali (InfoTip)
+- Component `InfoTip` in App.jsx — piccolo (i) hoverabile, popover glass
+- Tooltip su: DeltaPill (spiega "vs prec."), tier pill, hero KPI label (Followers/Seguiti/Reach/Engagement), SummaryRow (Account coinvolti, Interazioni totali, Profile views, Website clicks)
+- Default `side="up"` per evitare clipping nei card con `overflow-hidden`; `side="down"` dove il label è in alto
+- Non aggiunto su Heatmap/Content mix/Post analysis perché hanno già sottotitolo esplicativo
+
 ## [2026-04-24] refactor | Dashboard arricchito: tier pill, sparkline, trend
 - `erTier()` in App.jsx mappa ER su excellent/good/avg/poor usando [benchmarks.md](../.claude/skills/pulp-briefing/references/benchmarks.md). Pill renderizzato sotto l'ER nel hero card
 - `Sparkline` component (recharts AreaChart minimale) sotto ogni PostCard che ha ≥2 righe in `post_snapshot` — curva di reach nel tempo visibile a colpo d'occhio

@@ -12,6 +12,8 @@ Lista viva. Aggiornata ad ogni sessione. Quello che è `[x]` non serve più disc
 
 ## ✅ Done (recente → vecchio)
 
+- [x] Tooltip contestuali (InfoTip) su KPI/pill/sintesi — [wiki/log.md](wiki/log.md) 2026-04-24
+- [x] Dashboard arricchito: tier pill, sparkline per post, follower trend — [wiki/log.md](wiki/log.md) 2026-04-24
 - [x] Dashboard + skill + wiki pattern Karpathy consolidato — [wiki/log.md](wiki/log.md) 2026-04-24
 - [x] Deploy pubblico GH Pages con token mai nel bundle — [wiki/decisions/003-static-deploy.md](wiki/decisions/003-static-deploy.md)
 - [x] Skill `pulp-briefing` formalizzata — [.claude/skills/pulp-briefing/](.claude/skills/pulp-briefing/)

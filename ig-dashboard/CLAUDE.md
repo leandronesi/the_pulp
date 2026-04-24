@@ -1,0 +1,207 @@
+# ig-dashboard · The Pulp
+
+## Cos'è questo progetto
+
+Non è solo un dashboard — è la **base di un data analyst / social media manager AI** per l'account Instagram "The Pulp · Soave Sia il Vento". Il dashboard è la superficie visibile; l'obiettivo più ampio è che Claude Code diventi l'analista che monitora, diagnostica, produce briefing, e suggerisce il piano editoriale sulla base dei dati IG.
+
+**Pezzi dell'ecosistema:**
+
+1. **Dashboard web** *(✅ fatto)* — visualizzazione live dei dati IG, tutto client-side, usa la Facebook Graph API via Page access token (la Page FB "The Pulp - Soave Sia il Vento" gestisce l'IG Business Account).
+2. **Archivio storico SQLite** *(🛠 in costruzione)* — la Graph API non espone storico oltre 90gg e non dà serie temporali di follower. Cron giornaliero scrive snapshot in `data/pulp.db` così col tempo accumuliamo la storia vera.
+3. **Briefing automation** *(🔜 prossimo)* — cron settimanale che legge SQLite, confronta periodi, scrive un briefing markdown e lo invia via Gmail MCP.
+4. **Sentinella anomalie** *(🔜)* — cron giornaliero che flagga cali sospetti di reach/engagement/follower con alert su email/push.
+5. **Post-mortem on-demand** *(🔜 zero setup, serve solo l'archivio)* — "perché questo post è andato così?" → Claude legge SQLite, correla, scrive l'analisi.
+6. **Editor piano editoriale** *(futuro)* — suggerimenti di calendario basati su storico (best time, best format, best theme).
+7. **Caption buddy + reportistica mensile** *(futuro)*.
+
+**Cose che NON si possono fare, per onestà:**
+- Pubblicare per conto dell'utente (Instagram Content Publishing API è gated).
+- Analisi competitor via scraping automatico (IG è ostile).
+- Girare 24/7 come daemon — Claude Code esegue, lo scheduler triggera a slot precisi.
+
+## Stack
+
+**Frontend (dashboard):**
+- **Vite 5** (dev server, build)
+- **React 18** (un solo componente monolitico in [src/App.jsx](src/App.jsx))
+- **Tailwind 3** (via PostCSS, utility inline nel JSX)
+- **recharts** (grafici Area/Bar/Scatter)
+- **lucide-react** (icone)
+
+**Backend analytics (scripts Node):**
+- **better-sqlite3** — DB embedded, sync, single file in `data/pulp.db`
+- Script in `scripts/` invocabili via `npm run <nome>` o via scheduled agent
+- Nessun server HTTP per ora; il dashboard resta client-side, gli script girano separatamente
+
+## Architettura (90 secondi)
+
+Tutta l'app è in [src/App.jsx](src/App.jsx). Un singolo `useEffect` chiama `graph.facebook.com/v21.0` dal browser. Ogni cambio di `dateRange` o `refreshKey` rifetcha tutto.
+
+**Flusso di fetch:**
+
+1. **Resolve IG User ID** — `GET /{PAGE_ID}?fields=instagram_business_account` → ricava l'`ig_user_id`. Tutte le chiamate successive usano quell'ID.
+2. **Profilo** — `GET /{ig_user_id}?fields=username,name,biography,profile_picture_url,followers_count,follows_count,media_count`
+3. **Totali account — periodo corrente + precedente** in parallelo. 5 metriche (`reach`, `profile_views`, `website_clicks`, `accounts_engaged`, `total_interactions`) per ogni periodo. I warnings si accumulano solo dal periodo corrente; sul precedente si ignorano silenziosamente. Serve per calcolare i delta vs periodo precedente.
+4. **Reach giornaliero** — time series per il grafico ad area.
+5. **Media + insights per post** — `insights.metric(reach,saved,shares,views)` embedded; fallback senza insights se fallisce.
+6. **Audience demographics** — 4 breakdown paralleli (`age`, `gender`, `city`, `country`) su `follower_demographics`. Silenzioso: se torna errore (di solito sotto 100 follower engaged) la sezione semplicemente non compare.
+
+Errori fatali (resolve Page o profilo KO) vanno in `error`. Il resto finisce in `warnings[]`.
+
+**Derivati `useMemo`:**
+- `engagementRate` / `engagementRatePrev` — `total_interactions / reach * 100`
+- `reachChartData` — daily area chart
+- `enrichedPosts` — post con `reach`, `saved`, `shares`, `views`, `interactions`, `er` precalcolati
+- `sortedPosts` — griglia ordinata per `sortMode` (`reach | er | saved | shares`)
+- `scatterByType` — post raggruppati per `media_type` per lo scatter plot
+- `contentMix` — aggregato per media_type (count, avg reach, avg ER)
+- `heatmap` — griglia 7 giorni × 6 fasce orarie (4h ciascuna) con reach medio per cella
+
+**Sezioni render (in ordine):** header → errori/warnings → hero KPIs (4 card con delta) → reach panel + sintesi → content mix → post analysis (scatter + tabs + grid) → best time to post (heatmap) → audience (condizionale) → footer.
+
+## Configurazione
+
+In [src/config.js](src/config.js) (gitignorato):
+
+- `TOKEN` — **Page access token** derivato dallo user token long-lived via `GET /me/accounts`. Page token da user long-lived di solito non scadono (finché l'utente non revoca).
+- `PAGE_ID` — ID della Page FB che gestisce l'IG Business Account (`111507393712812`).
+- `API` — base URL `https://graph.facebook.com/v21.0`
+
+Il file template committato è [src/config.example.js](src/config.example.js). Dopo clone: `cp src/config.example.js src/config.js` e inserire il token. Questo pattern assicura che il token non finisca mai su GitHub.
+
+**Il token finisce nel bundle JS.** OK in locale, non deployare su URL pubblico senza prima spostare le chiamate dietro un backend.
+
+## Demo mode (TOKEN vuoto)
+
+Quando `TOKEN` in `config.js` è stringa vuota o contiene il placeholder `PASTE…`, il dashboard passa automaticamente in demo mode: [src/fakeData.js](src/fakeData.js) genera dati deterministici (seed basato su `dateRange`) che alimentano tutte le sezioni (KPI, reach daily, post con thumbnail via `picsum.photos`, audience).
+
+Utile per:
+- Lavorare su UI/UX senza token valido
+- Fare screenshot presentabili senza esporre dati reali
+- Vedere come reagisce il layout con diverse forme di dati
+
+Il badge amber `demo · dati fake` nell'header segnala lo stato. Appena incolli un token valido, demo mode si spegne e partono le chiamate reali.
+
+## Avvio
+
+```bash
+npm install
+npm run dev
+```
+
+Apre `http://localhost:5180` automaticamente.
+
+## Permessi richiesti sul token
+
+Perché funzionino tutte le sezioni, lo user token di partenza deve avere:
+
+- `pages_show_list` — per listare le Page via `/me/accounts`
+- `pages_read_engagement` — lettura base della Page
+- `instagram_basic` — profilo, media dell'IG Business Account
+- `instagram_manage_insights` — **tutte le metriche insights** (reach, profile_views, ecc.)
+
+Se vedi errori `(#10) Application does not have permission for this action` sulle metriche, manca `instagram_manage_insights` sullo user token da cui è stato derivato il Page token.
+
+## Generazione token
+
+1. **Graph API Explorer** → app **The Pulp** → seleziona i permessi `pages_show_list`, `pages_read_engagement`, `instagram_basic`, `instagram_manage_insights` → **Generate Access Token**
+2. Scambialo per uno long-lived:
+   ```
+   GET https://graph.facebook.com/v21.0/oauth/access_token
+     ?grant_type=fb_exchange_token
+     &client_id={APP_ID}
+     &client_secret={APP_SECRET}
+     &fb_exchange_token={SHORT_LIVED_USER_TOKEN}
+   ```
+3. Chiama `GET /me/accounts?access_token={LONG_LIVED_USER_TOKEN}` — trova la Page "The Pulp - Soave Sia il Vento" e copia il suo `access_token` (quello è il Page access token da mettere in `TOKEN`).
+4. Il `PAGE_ID` è già fissato in config (`111507393712812`); cambialo solo se la Page viene ricreata.
+
+## Perché la Facebook Graph API e non Instagram Login
+
+Storia del progetto: la prima iterazione usava FB Graph API + `instagram_manage_insights`. A metà corsa Meta dava errore generico ("Si è verificato un errore. Riprova più tardi") nell'aggiungere `instagram_manage_insights` all'app → migrazione temporanea al flow Instagram Login (`graph.instagram.com` + famiglia `instagram_business_*`). Sistemato il blocco lato Meta, siamo tornati alla Facebook Graph API perché è il flow canonico per dashboard business lato Page.
+
+Differenze chiave rispetto al flow Instagram Login:
+- Endpoint: `graph.facebook.com` (non `graph.instagram.com`)
+- Auth: Page access token derivato da user long-lived (non token IG diretto)
+- Identificatore: servono `PAGE_ID` + resolve runtime dell'`ig_user_id` (non `me`)
+- Permessi: `pages_*` + `instagram_basic` + `instagram_manage_insights` (non famiglia `instagram_business_*`)
+
+## Data layer (SQLite)
+
+Archivio storico locale per costruire ciò che la Graph API non espone: serie temporali di follower, evoluzione reach/engagement dei singoli post nel tempo, demographics storiche. Il DB file vive in `data/pulp.db` (gitignorato — contiene dati IG).
+
+**Tabelle** (schema autoritativo in [scripts/db.js](scripts/db.js)):
+
+| Tabella | Cardinalità | Chiave | Cosa ci va |
+|---|---|---|---|
+| `daily_snapshot` | 1 riga/giorno | `date` (YYYY-MM-DD Europe/Rome) | Followers, follows, media_count + 5 metriche del giorno (reach, profile_views, website_clicks, accounts_engaged, total_interactions). Idempotente: ri-run dello stesso giorno aggiorna la riga. |
+| `post` | 1 riga/post | `post_id` | Metadata stabile: timestamp, media_type, caption, permalink, URL thumbnail. Aggiornato on-upsert ad ogni snapshot. |
+| `post_snapshot` | N righe/post | `(post_id, fetched_at)` | Metriche variabili nel tempo (like, comments, reach, saved, shares, views). **Ogni fetch crea una nuova riga** → permette di ricostruire la curva di crescita di ogni post. |
+| `audience_snapshot` | ~20 righe/giorno | `(date, breakdown, key)` | Demographics dei follower — breakdown ∈ {age, gender, city, country}. |
+| `run_log` | 1 riga/esecuzione | auto | Telemetria: quando, che tipo di script, esito, errori. |
+| `meta` | KV | `key` | Valori cacheati: `ig_user_id`, eventuali altri config. |
+
+**Helpers in [scripts/db.js](scripts/db.js):**
+- `getDb()` — apre/crea DB, applica schema (idempotente)
+- `todayIsoDate()` — data di oggi in timezone Europe/Rome
+- `startRunLog(kind)` / `endRunLog(id, {status, summary, error})` — tracciano le esecuzioni
+- `setMeta(key, value)` / `getMeta(key)` — KV store
+
+## Script analytics
+
+Invocabili via `npm run <nome>` dalla root di `ig-dashboard/`:
+
+| Script | File | Cosa fa |
+|---|---|---|
+| `npm run init-db` | [scripts/init-db.js](scripts/init-db.js) | Apre/crea `data/pulp.db`, applica schema, stampa conteggi per conferma. Idempotente. |
+| `npm run snapshot` | [scripts/snapshot.js](scripts/snapshot.js) | Fetch IG corrente → scrive `daily_snapshot`, `post` + `post_snapshot`, `audience_snapshot`. In fake mode esce subito senza toccare il DB. Pensato per cron giornaliero. |
+
+Ogni script è ESM, importa `src/config.js` direttamente (niente dotenv), e rispetta `isFakeToken(TOKEN)` per evitare di inquinare il DB con dati demo.
+
+## File principali
+
+- [src/App.jsx](src/App.jsx) — tutto: fetch, state, render, subcomponents (`KpiCard`, `DeltaPill`, `SummaryRow`, `ContentTypeTile`, `PostCard`, `Metric`, `AudiencePanel`, `DarkTooltip`, `ScatterTooltip`)
+- [src/config.js](src/config.js) — token + page id + API base
+- [src/fakeData.js](src/fakeData.js) — generatore demo (con `isFakeToken`)
+- [src/main.jsx](src/main.jsx) — bootstrap React
+- [src/index.css](src/index.css) — `@tailwind base/components/utilities`
+- [scripts/db.js](scripts/db.js) — DB layer condiviso
+- [scripts/init-db.js](scripts/init-db.js) — init schema
+- [scripts/snapshot.js](scripts/snapshot.js) — daily snapshot
+- [data/pulp.db](data/pulp.db) — SQLite archivio (gitignorato)
+- [public/logo-mark.jpeg](public/logo-mark.jpeg) / [public/logo-wordmark.jpeg](public/logo-wordmark.jpeg) — brand assets
+- [vite.config.js](vite.config.js) — porta 5180 + `open: true` + `strictPort`
+- [tailwind.config.js](tailwind.config.js) / [postcss.config.js](postcss.config.js) — setup Tailwind
+
+## Palette brand
+
+Monocromatica verde foresta + cream, derivata dal logo:
+- Background radiale: `#164F3F` → `#0B3A30` → `#052019`
+- Primary cream: `#EDE5D0`
+- Gold: `#D4A85C` · Terracotta: `#B8823A` · Deep gold: `#B88A4A`
+- Sage: `#7FB3A3` / `#8FB5A3` · Mid green: `#3E7A66` · Deep: `#0E4A3E`
+- Delta up (sage) / down (terracotta soft `#D98B6F`)
+- I colori sono inline in JSX via Tailwind arbitrary values, non definiti nel `tailwind.config.js`.
+
+## Convenzioni
+
+- Lingua UI e comunicazione: **italiano** (label, errori, commit message, commenti script).
+- Font: Fraunces (display) + JetBrains Mono (testo tech), caricati via `@import` inline.
+- Stile: dark glassmorphism, palette verde foresta + cream (vedi sezione Palette).
+- Nessun test, nessun lint config, nessun routing.
+- App.jsx resta **monolitico** finché non diventa ingestibile — non splittare preventivamente in tanti componenti.
+- Tutti i colori inline via arbitrary values Tailwind, non definiti in `tailwind.config.js`.
+
+## Preferenze operative (regole del progetto)
+
+- **Decisività**: quando i dati che l'utente passa (token, endpoint, scope, output API) dichiarano già l'intento, procedere senza chiedere conferma. Fare domande solo se l'azione è distruttiva o se il path richiederebbe rewrite enormi di file non correlati.
+- **Refactor locali e reversibili** → esegui direttamente, non proporre e aspettare.
+- **Non duplicare memorie**: quello che è già in CLAUDE.md non va salvato anche in memory system.
+- **Demo mode va preservato**: `TOKEN=""` in `config.js` deve continuare a funzionare con dati fake, è lo strumento di lavoro sul dashboard.
+
+## Quando tocca rimettere le mani
+
+- **Token scaduto/revocato** → ri-genera lo user token dal Graph API Explorer, scambialo long-lived, ricava il Page token da `/me/accounts`, aggiorna `TOKEN` in `src/config.js`.
+- **Metrica nuova di IG** → aggiungi al `metrics[]` array in `App.jsx` e crea la relativa `<MiniStat />` o sezione.
+- **Bump versione API** (es. v21→v22) → cambia `API` in `config.js` e verifica breaking changes nel [changelog Graph API](https://developers.facebook.com/docs/graph-api/changelog).
+- **Deploy pubblico** → richiede refactor: spostare le chiamate dietro un piccolo backend (es. Node/Express, Cloudflare Worker) per non esporre il Page token.

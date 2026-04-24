@@ -1,0 +1,11 @@
+node_modules
+dist
+.DS_Store
+*.log
+.env
+
+# SQLite archive (snapshot storici — contiene dati IG)
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm

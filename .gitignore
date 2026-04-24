@@ -1,0 +1,25 @@
+# Dependencies
+**/node_modules/
+**/dist/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+
+# Env files
+.env
+.env.local
+.env.*.local
+
+# SQLite archive — contiene dati IG reali, mai committare
+**/data/*.db
+**/data/*.db-journal
+**/data/*.db-wal
+**/data/*.db-shm
+
+# SEGRETI: il Page access token vive qui
+# replica config.example.js → config.js e metti il tuo token
+ig-dashboard/src/config.js

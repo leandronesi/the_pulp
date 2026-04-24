@@ -34,6 +34,27 @@ export function normalizeMediaType(type) {
   return MEDIA_TYPE_BENCHMARKS[type] ? type : "IMAGE";
 }
 
+// Meta puo` restituire i Reel come media_type=VIDEO. Quando disponibile,
+// media_product_type=REELS e` il segnale piu` affidabile; per lo storico DB,
+// dove abbiamo solo media_type + permalink, usiamo /reel/ come fallback.
+export function resolveMediaType(post = {}) {
+  const mediaType = String(post.media_type || post.mediaType || "").toUpperCase();
+  const mediaProductType = String(
+    post.media_product_type || post.mediaProductType || ""
+  ).toUpperCase();
+  const permalink = String(post.permalink || "");
+
+  if (mediaProductType === "REELS") return "REELS";
+  if (mediaType === "REELS") return "REELS";
+  if (mediaType === "VIDEO" && /\/reel\//i.test(permalink)) return "REELS";
+  return normalizeMediaType(mediaType);
+}
+
+export function isVideoLikeMedia(post = {}) {
+  const type = resolveMediaType(post);
+  return type === "VIDEO" || type === "REELS";
+}
+
 function average(values) {
   const valid = values.filter((v) => Number.isFinite(v));
   if (!valid.length) return 0;
@@ -177,7 +198,7 @@ export function derivePostAnalytics(posts, postHistory = {}, account = null) {
     return {
       post,
       id: post.id,
-      mediaType: normalizeMediaType(post.media_type),
+      mediaType: resolveMediaType(post),
       reach,
       saved,
       shares,
@@ -247,7 +268,7 @@ export function deriveContentMix(posts) {
   });
 
   for (const post of posts || []) {
-    const type = normalizeMediaType(post.media_type || post.mediaType);
+    const type = resolveMediaType(post);
     const bucket = buckets[type];
     bucket.count += 1;
     bucket.reachSum += Number(post.reach) || 0;

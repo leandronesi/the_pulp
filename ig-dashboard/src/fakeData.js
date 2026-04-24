@@ -152,12 +152,16 @@ export function generateFakeData(dateRange) {
       id,
       caption: CAPTIONS[i % CAPTIONS.length],
       media_type: type,
+      media_product_type: type === "REELS" ? "REELS" : "FEED",
       media_url: `https://picsum.photos/seed/pulp-${i}-${dateRange}/600/600`,
       thumbnail_url:
         type === "REELS" || type === "VIDEO"
           ? `https://picsum.photos/seed/pulp-${i}-${dateRange}/600/600`
           : null,
-      permalink: "https://instagram.com/thepulp_demo",
+      permalink:
+        type === "REELS"
+          ? `https://www.instagram.com/reel/${id}/`
+          : `https://www.instagram.com/p/${id}/`,
       timestamp: ts.toISOString(),
       like_count,
       comments_count,

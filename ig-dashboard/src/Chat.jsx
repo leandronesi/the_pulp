@@ -23,6 +23,7 @@ import {
   ChevronUp,
   Trash2,
 } from "lucide-react";
+import { resolveMediaType } from "./analytics.js";
 
 const STORAGE_KEY = "pulp-chat-history";
 
@@ -197,7 +198,7 @@ function buildDashboardState({
     postsVisible: (posts || []).length,
     firstPostsInFeed: (posts || []).slice(0, 5).map((p) => ({
       id: p.id,
-      mediaType: p.media_type,
+      mediaType: resolveMediaType(p),
       timestamp: p.timestamp,
       caption: (p.caption || "").slice(0, 80),
     })),

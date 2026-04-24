@@ -21,10 +21,10 @@ const METRICS_DAY = [
 const AUDIENCE_BREAKDOWNS = ["age", "gender", "city", "country"];
 
 const MEDIA_FIELDS_WITH_INSIGHTS =
-  "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count,insights.metric(reach,saved,shares,views)";
+  "id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count,insights.metric(reach,saved,shares,views)";
 
 const MEDIA_FIELDS_NO_INSIGHTS =
-  "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count";
+  "id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count";
 
 export function createGql({ token, api = "https://graph.facebook.com/v21.0" }) {
   if (!token) throw new Error("createGql: token mancante");

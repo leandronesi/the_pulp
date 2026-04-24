@@ -55,8 +55,10 @@ import {
   deriveContentMix,
   derivePostAnalytics,
   deriveScatterMeta,
+  isVideoLikeMedia,
   metricOf,
   postInteractions,
+  resolveMediaType,
 } from "./analytics.js";
 import Chat from "./Chat.jsx";
 
@@ -415,14 +417,14 @@ export default function App() {
 
         // Media + per-post insights
         const mediaFields =
-          "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count,insights.metric(reach,saved,shares,views)";
+          "id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count,insights.metric(reach,saved,shares,views)";
         const mediaUrl = `${API}/${igUserId}/media?fields=${mediaFields}&limit=30&access_token=${TOKEN}`;
         const mRes = await fetch(mediaUrl);
         const mData = await mRes.json();
         if (mData.error) {
           warns.push(`media insights: ${mData.error.message}`);
           const fallback = await fetch(
-            `${API}/${igUserId}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count&limit=30&access_token=${TOKEN}`
+            `${API}/${igUserId}/media?fields=id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count&limit=30&access_token=${TOKEN}`
           ).then((r) => r.json());
           setPosts(fallback.data || []);
         } else {
@@ -505,16 +507,19 @@ export default function App() {
 
   const postsOutsideRange = posts.length - postsInRange.length;
 
-  const postAnalyticsById = useMemo(() => {
-    if (staticData?.postAnalytics) return staticData.postAnalytics;
-    return derivePostAnalytics(posts, postHistory, account);
-  }, [staticData, posts, postHistory, account]);
+  const postAnalyticsById = useMemo(
+    () => derivePostAnalytics(posts, postHistory, account),
+    [posts, postHistory, account]
+  );
 
   const enrichedPosts = useMemo(() => {
     return postsInRange.map((p) => {
       const analytics = postAnalyticsById?.[p.id] || {};
+      const mediaType = analytics.mediaType || resolveMediaType(p);
       return {
         ...p,
+        media_type: mediaType,
+        mediaType,
         reach: analytics.reach ?? metricOf(p, "reach"),
         saved: analytics.saved ?? metricOf(p, "saved"),
         shares: analytics.shares ?? metricOf(p, "shares"),
@@ -566,7 +571,7 @@ export default function App() {
       CAROUSEL_ALBUM: [],
     };
     analyzedPosts.forEach((p) => {
-      const type = byType[p.media_type] ? p.media_type : "IMAGE";
+      const type = byType[p.mediaType] ? p.mediaType : "IMAGE";
       byType[type].push({
         x: p.reach,
         y: p.er,
@@ -643,7 +648,7 @@ export default function App() {
       reachSum += p.reach;
       savedSum += p.saved;
       sharesSum += p.shares;
-      if (p.media_type === "VIDEO" || p.media_type === "REELS") {
+      if (isVideoLikeMedia(p)) {
         viewsSum += p.views;
         videoCount += 1;
       }
@@ -1998,7 +2003,7 @@ function LifecycleMiniChart({ data }) {
 function PostCard({ post, rank }) {
   const thumb = post.thumbnail_url || post.media_url;
   const caption = (post.caption || "").slice(0, 80);
-  const isVideo = post.media_type === "VIDEO" || post.media_type === "REELS";
+  const isVideo = isVideoLikeMedia(post);
   const bench = benchmarkTier(post.benchmarkRatio);
   const curveMeta = CURVE_TYPE_META[post.curveType] || CURVE_TYPE_META.forming;
   return (

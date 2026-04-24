@@ -27,6 +27,7 @@ import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { getDb, todayIsoDate, startRunLog, endRunLog } from "./db.js";
+import { resolveMediaType } from "../src/analytics.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPORTS_DIR = resolve(__dirname, "..", "..", "reports");
@@ -165,7 +166,7 @@ async function getPostsInPeriod(db, sinceIso, untilIso) {
     return {
       postId: r.post_id,
       timestamp: r.timestamp,
-      mediaType: r.media_type,
+      mediaType: resolveMediaType(r),
       caption: r.caption || "",
       permalink: r.permalink || "",
       reach,

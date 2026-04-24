@@ -216,11 +216,12 @@ export async function loadCredentials() {
     /* no config.js, solo env */
   }
   return {
-    token: process.env.IG_PAGE_TOKEN || defaultConfig.TOKEN || "",
-    pageId: process.env.IG_PAGE_ID || defaultConfig.PAGE_ID || "",
-    api:
+    token: (process.env.IG_PAGE_TOKEN || defaultConfig.TOKEN || "").trim(),
+    pageId: (process.env.IG_PAGE_ID || defaultConfig.PAGE_ID || "").trim(),
+    api: (
       process.env.IG_API ||
       defaultConfig.API ||
-      "https://graph.facebook.com/v21.0",
+      "https://graph.facebook.com/v21.0"
+    ).trim(),
   };
 }

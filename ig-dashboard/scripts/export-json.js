@@ -36,8 +36,10 @@ const DAY_SECONDS = 86400;
 // Storico post + daily da Turso (facoltativo: se env assenti → ritorna vuoti,
 // il dashboard gestisce la mancanza con sparkline nascosti).
 async function fetchHistoryFromTurso(postIds) {
-  const url = process.env.TURSO_DATABASE_URL;
-  const tok = process.env.TURSO_AUTH_TOKEN;
+  // Trim per resistere a secret paste-ati con whitespace/newline finali
+  // (classico pitfall dei GitHub Secrets)
+  const url = process.env.TURSO_DATABASE_URL?.trim();
+  const tok = process.env.TURSO_AUTH_TOKEN?.trim();
   console.log(
     `[history] TURSO_DATABASE_URL present=${!!url} (len=${url?.length || 0}) · TURSO_AUTH_TOKEN present=${!!tok} (len=${tok?.length || 0})`
   );
@@ -48,7 +50,7 @@ async function fetchHistoryFromTurso(postIds) {
   try {
     const db = createClient({
       url,
-      authToken: process.env.TURSO_AUTH_TOKEN,
+      authToken: tok,
     });
 
     // Serie storica post snapshot (per i post nel feed attuale)
@@ -107,12 +109,12 @@ async function fetchHistoryFromTurso(postIds) {
 // risparmiamo 4 call Graph API a ogni export). Se Turso non ha righe
 // recenti, fallback a Graph API diretta.
 async function fetchAudienceSmart(gql, ig) {
-  const url = process.env.TURSO_DATABASE_URL;
+  const url = process.env.TURSO_DATABASE_URL?.trim();
   if (url) {
     try {
       const db = createClient({
         url,
-        authToken: process.env.TURSO_AUTH_TOKEN,
+        authToken: process.env.TURSO_AUTH_TOKEN?.trim(),
       });
       const dateRes = await db.execute(
         "SELECT MAX(date) AS d FROM audience_snapshot"

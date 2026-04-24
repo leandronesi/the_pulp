@@ -72,9 +72,9 @@ function validateSql(sql) {
 }
 
 async function executeQuery(sql) {
-  const url = process.env.TURSO_DATABASE_URL;
+  const url = process.env.TURSO_DATABASE_URL?.trim();
   if (!url) throw new Error("TURSO_DATABASE_URL non configurata");
-  const db = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN });
+  const db = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN?.trim() });
   const safeSql = validateSql(sql);
   const t0 = Date.now();
   const res = await db.execute(safeSql);
@@ -156,7 +156,7 @@ const TOOLS = [
 ];
 
 async function openaiChat({ messages, model }) {
-  const key = process.env.OPENAI_API_KEY;
+  const key = process.env.OPENAI_API_KEY?.trim();
   if (!key) throw new Error("OPENAI_API_KEY non configurata");
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",

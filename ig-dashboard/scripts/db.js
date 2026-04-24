@@ -88,11 +88,11 @@ let _mode = null;
 export async function getDb() {
   if (_db) return _db;
 
-  const remoteUrl = process.env.TURSO_DATABASE_URL;
+  const remoteUrl = process.env.TURSO_DATABASE_URL?.trim();
   if (remoteUrl) {
     _db = createClient({
       url: remoteUrl,
-      authToken: process.env.TURSO_AUTH_TOKEN,
+      authToken: process.env.TURSO_AUTH_TOKEN?.trim(),
     });
     _mode = "turso";
   } else {

@@ -191,7 +191,7 @@ function readSkillRef(filename) {
 }
 
 async function generateNarrative(ctx) {
-  const key = process.env.OPENAI_API_KEY;
+  const key = process.env.OPENAI_API_KEY?.trim();
   if (!key || noLlm) return null;
 
   const model = process.env.OPENAI_MODEL || "gpt-5.4-mini";

@@ -31,6 +31,7 @@ import {
   Share2,
   Clock,
   Globe2,
+  Info,
   Image as ImageIcon,
 } from "lucide-react";
 import { TOKEN, PAGE_ID, API } from "./config.js";
@@ -579,12 +580,14 @@ export default function App() {
                 value={fmt(account.followers_count)}
                 sparkline={followerTrend.map((d) => ({ reach: d.followers }))}
                 accent="from-[#EDE5D0] to-[#D4A85C]"
+                info="Follower attuali. La piccola curva sotto mostra come il numero cambia giorno per giorno (serve ≥2 giorni di dati per apparire). La Graph API non dà lo storico: ce lo costruiamo noi."
               />
               <KpiCard
                 icon={<UserPlus size={16} />}
                 label="Seguiti"
                 value={fmt(account.follows_count)}
                 accent="from-[#D4A85C] to-[#B8823A]"
+                info="Numero di account che The Pulp segue."
               />
               <KpiCard
                 icon={<TrendingUp size={16} />}
@@ -592,6 +595,7 @@ export default function App() {
                 value={fmt(totals.reach)}
                 deltaPct={delta(totals.reach, totalsPrev.reach)}
                 accent="from-[#8FB5A3] to-[#3E7A66]"
+                info={`Account UNICI che hanno visto almeno un contenuto negli ultimi ${dateRange} giorni. Un utente che vede 10 post conta 1 (dedupe automatico Meta).`}
               />
               <KpiCard
                 icon={<Activity size={16} />}
@@ -600,6 +604,7 @@ export default function App() {
                 deltaPct={delta(engagementRate, engagementRatePrev)}
                 tier={erTier(engagementRate)}
                 accent="from-[#3E7A66] to-[#0E4A3E]"
+                info="Engagement rate del periodo: (like + commenti + salvati + condivisioni + azioni sul profilo) / reach. Più alto = audience che interagisce di più rispetto a quanta ne raggiungi."
               />
             </section>
 
@@ -681,6 +686,7 @@ export default function App() {
                     totals.accounts_engaged,
                     totalsPrev.accounts_engaged
                   )}
+                  info="Utenti UNICI che hanno fatto almeno un'azione (like, commento, salva, condividi). Più affidabile del totale interazioni per misurare engagement vero: uno che mette 5 like conta 1."
                 />
                 <SummaryRow
                   icon={<Heart size={14} />}
@@ -690,12 +696,14 @@ export default function App() {
                     totals.total_interactions,
                     totalsPrev.total_interactions
                   )}
+                  info="Somma di like + commenti + salvati + condivisioni + attività sul profilo. È il numero che mette al denominatore il calcolo dell'engagement rate."
                 />
                 <SummaryRow
                   icon={<Eye size={14} />}
                   label="Profile views"
                   value={fmt(totals.profile_views)}
                   deltaPct={delta(totals.profile_views, totalsPrev.profile_views)}
+                  info="Volte che la pagina profilo è stata aperta nel periodo (non utenti unici, non click sul bio-link)."
                 />
                 {totals.website_clicks > 0 && (
                   <SummaryRow
@@ -706,6 +714,7 @@ export default function App() {
                       totals.website_clicks,
                       totalsPrev.website_clicks
                     )}
+                    info="Tap sul link in bio. Se lasci il link in bio vuoto, questo resta 0."
                   />
                 )}
               </div>
@@ -1053,7 +1062,31 @@ export default function App() {
 }
 
 // ─── Subcomponents ──────────────────────────────────────────────────────────
-function KpiCard({ icon, label, value, accent, deltaPct, tier, sparkline }) {
+// Tooltip piccolo accessibile via hover. Default apre verso l'alto
+// ("up") per evitare il clipping nei card con overflow-hidden.
+function InfoTip({ text, side = "up" }) {
+  const pos =
+    side === "up"
+      ? "bottom-full mb-2 left-0"
+      : "top-full mt-2 left-0";
+  return (
+    <span className="relative inline-flex items-center group/tip">
+      <Info
+        size={10}
+        className="text-white/40 group-hover/tip:text-white/90 cursor-help transition"
+      />
+      <span
+        className={`absolute ${pos} opacity-0 group-hover/tip:opacity-100 transition pointer-events-none z-20 w-60`}
+      >
+        <span className="block glass rounded-lg p-2 text-[10px] mono-font text-white/80 leading-relaxed normal-case tracking-normal">
+          {text}
+        </span>
+      </span>
+    </span>
+  );
+}
+
+function KpiCard({ icon, label, value, accent, deltaPct, tier, sparkline, info }) {
   return (
     <div className="glass rounded-2xl p-5 relative overflow-hidden group transition">
       <div
@@ -1062,6 +1095,7 @@ function KpiCard({ icon, label, value, accent, deltaPct, tier, sparkline }) {
       <div className="flex items-center gap-2 text-white/60 text-xs mono-font mb-3">
         {icon}
         <span className="uppercase tracking-wider">{label}</span>
+        {info && <InfoTip text={info} side="down" />}
       </div>
       <div className="display-font text-4xl text-white font-light">{value}</div>
       <div className="mt-2 flex items-center gap-2 flex-wrap">
@@ -1072,6 +1106,10 @@ function KpiCard({ icon, label, value, accent, deltaPct, tier, sparkline }) {
             style={{ backgroundColor: `${tier.color}15`, color: tier.color }}
           >
             tier {tier.label}
+            <InfoTip
+              text="Tier IG basato su engagement rate. Excellent >6%, good 3-6%, average 1-3%, poor <1%. Riferimento: benchmark di settore 2025-2026."
+              side="up"
+            />
           </span>
         )}
       </div>
@@ -1099,16 +1137,21 @@ function DeltaPill({ value }) {
     >
       {arrow} {Math.abs(value).toFixed(1)}%{" "}
       <span className="text-white/30">vs prec.</span>
+      <InfoTip
+        text="Variazione rispetto al periodo precedente di pari durata. Se stai guardando 7g, confronto coi 7g precedenti; se 30g, coi 30g precedenti."
+        side="up"
+      />
     </span>
   );
 }
 
-function SummaryRow({ icon, label, value, deltaPct }) {
+function SummaryRow({ icon, label, value, deltaPct, info }) {
   return (
     <div className="flex items-center justify-between py-2 border-b border-white/5 last:border-b-0">
       <div className="flex items-center gap-2 text-white/60 text-xs mono-font">
         {icon}
         <span>{label}</span>
+        {info && <InfoTip text={info} side="down" />}
       </div>
       <div className="text-right">
         <div className="text-white text-lg mono-font font-semibold">{value}</div>

@@ -12,6 +12,15 @@ Tipi di kind:
 
 ---
 
+## [2026-04-24] fix | Layout rebalance: rate strip + chart flex-grow + reach trio
+- Problema: Sintesi con 7 righe (save/share/views aggiunti) la rendeva molto alta, il reach chart panel si stretchava ma chart a `height={260}` fisso lasciava enorme vuoto sotto. Squilibrio visivo brutto.
+- Fix:
+  - **Rate strip**: nuova sezione a 4 colonne tra hero KPIs e reach+sintesi. Contiene Save rate, Share rate, Views video/reel, Account coinvolti (spostato da Sintesi). Tile compatti `RateCard` con tier pill visibile
+  - **ReachTrio**: tre mini-stat (totale, media/giorno, picco con data) inline col titolo del reach chart → riempie lo spazio header e dà densità informativa
+  - Chart panel diventa `flex flex-col` con chart in `<div className="flex-1 min-h-[260px]">` + ResponsiveContainer `height="100%"` → riempie lo spazio verticale fino all'altezza di Sintesi
+  - Sintesi ridotta a 3 righe (Interazioni totali, Profile views, Website clicks condizionale) — rimossi Account coinvolti, save rate, share rate, views che ora vivono nella rate strip
+- Risultato: altezze bilanciate, gerarchia metriche più chiara (hero → rate → chart/sintesi), niente più empty space enorme
+
 ## [2026-04-24] fix | Date picker rebuild: Radix Popover + react-day-picker (stile brand)
 - Il primo tentativo era un popover custom `position: absolute z-50` che veniva coperto dai KpiCard (stacking context con `overflow-hidden`) + native date inputs brutti. Consigliato dall'utente: "non posso credere che t'hanno consigliato sta merda" — fair.
 - Rebuild usando le skill installate:

@@ -736,19 +736,63 @@ export default function App() {
               />
             </section>
 
+            {/* Rate strip — save/share/views/engaged (le metriche 2026) */}
+            <section className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8 fadein">
+              <RateCard
+                icon={<Bookmark size={14} />}
+                label="Save rate"
+                value={fmtPct(postMetricsAgg?.saveRate)}
+                tier={saveRateTier(postMetricsAgg?.saveRate)}
+                info="Saves ÷ Reach × 100. Nel 2026 Meta dà peso ~5× ai salvataggi rispetto ai like per spingere su Esplora. >2% excellent · 1–2% good · 0.5–1% avg · <0.5% poor."
+              />
+              <RateCard
+                icon={<Share2 size={14} />}
+                label="Share rate"
+                value={fmtPct(postMetricsAgg?.shareRate)}
+                tier={shareRateTier(postMetricsAgg?.shareRate)}
+                info="Shares ÷ Reach × 100. 'Vale la pena mandarlo a qualcuno'. >1.5% excellent · 0.5–1.5% good · <0.5% avg."
+              />
+              <RateCard
+                icon={<Film size={14} />}
+                label={
+                  postMetricsAgg?.videoCount
+                    ? `Views · ${postMetricsAgg.videoCount} video/reel`
+                    : "Views"
+                }
+                value={fmt(postMetricsAgg?.viewsTotal ?? 0)}
+                info="Somma delle visualizzazioni su video e reel visibili. Diversa dal reach: una view conta ogni singola volta che il contenuto viene mostrato, anche allo stesso utente. Dal 2025 IG ha unificato 'impressions' in 'views'."
+              />
+              <RateCard
+                icon={<Sparkles size={14} />}
+                label="Account coinvolti"
+                value={fmt(totals.accounts_engaged)}
+                deltaPct={delta(
+                  totals.accounts_engaged,
+                  totalsPrev.accounts_engaged
+                )}
+                info="Utenti UNICI che hanno fatto almeno un'azione (like, commento, saved, share). Uno che mette 5 like conta 1."
+              />
+            </section>
+
             {/* Reach chart + secondary panel */}
             <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-10 fadein">
               {reachChartData.length > 0 && (
-                <div className="glass rounded-3xl p-6 md:p-8 lg:col-span-2">
-                  <div className="mb-6">
-                    <h2 className="display-font text-2xl text-white font-light">
-                      Reach giornaliero
-                    </h2>
-                    <p className="text-xs text-white/40 mono-font mt-1">
-                      ultimi {dateRange} giorni
-                    </p>
+                <div className="glass rounded-3xl p-6 md:p-8 lg:col-span-2 flex flex-col">
+                  <div className="mb-6 flex items-baseline justify-between flex-wrap gap-3">
+                    <div>
+                      <h2 className="display-font text-2xl text-white font-light">
+                        Reach giornaliero
+                      </h2>
+                      <p className="text-xs text-white/40 mono-font mt-1">
+                        ultimi {dateRange} giorni
+                      </p>
+                    </div>
+                    {reachChartData.length > 0 && (
+                      <ReachTrio data={reachChartData} />
+                    )}
                   </div>
-                  <ResponsiveContainer width="100%" height={260}>
+                  <div className="flex-1 min-h-[260px]">
+                    <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={reachChartData}>
                       <defs>
                         <linearGradient
@@ -794,6 +838,7 @@ export default function App() {
                       />
                     </AreaChart>
                   </ResponsiveContainer>
+                  </div>
                 </div>
               )}
 
@@ -806,16 +851,6 @@ export default function App() {
                     metriche aggregate {dateRange}g
                   </p>
                 </div>
-                <SummaryRow
-                  icon={<Sparkles size={14} />}
-                  label="Account coinvolti"
-                  value={fmt(totals.accounts_engaged)}
-                  deltaPct={delta(
-                    totals.accounts_engaged,
-                    totalsPrev.accounts_engaged
-                  )}
-                  info="Utenti UNICI che hanno fatto almeno un'azione (like, commento, salva, condividi). Più affidabile del totale interazioni per misurare engagement vero: uno che mette 5 like conta 1."
-                />
                 <SummaryRow
                   icon={<Heart size={14} />}
                   label="Interazioni totali"
@@ -833,32 +868,6 @@ export default function App() {
                   deltaPct={delta(totals.profile_views, totalsPrev.profile_views)}
                   info="Volte che la pagina profilo è stata aperta nel periodo (non utenti unici, non click sul bio-link)."
                 />
-                {postMetricsAgg?.saveRate != null && (
-                  <SummaryRow
-                    icon={<Bookmark size={14} />}
-                    label="Save rate"
-                    value={fmtPct(postMetricsAgg.saveRate)}
-                    tier={saveRateTier(postMetricsAgg.saveRate)}
-                    info="Saves / Reach × 100 sui post visibili. Nel 2026 Meta dà peso ~5× ai salvataggi rispetto ai like per pushare il contenuto su esplora. >2% excellent · 1-2% good · 0.5-1% avg · <0.5% poor."
-                  />
-                )}
-                {postMetricsAgg?.shareRate != null && (
-                  <SummaryRow
-                    icon={<Share2 size={14} />}
-                    label="Share rate"
-                    value={fmtPct(postMetricsAgg.shareRate)}
-                    tier={shareRateTier(postMetricsAgg.shareRate)}
-                    info="Shares / Reach × 100. Indica 'vale la pena mandarlo a qualcuno'. Metrica forte di resonance per la community. >1.5% excellent · 0.5-1.5% good · <0.5% avg."
-                  />
-                )}
-                {postMetricsAgg?.videoCount > 0 && (
-                  <SummaryRow
-                    icon={<Film size={14} />}
-                    label={`Views (${postMetricsAgg.videoCount} video/reel)`}
-                    value={fmt(postMetricsAgg.viewsTotal)}
-                    info="Somma delle visualizzazioni su video e reel visibili. Diversa dal reach: una view conta ogni singola volta che il contenuto viene mostrato, anche allo stesso utente. Dal 2025 IG ha unificato 'impressions' e 'views' sotto quest'unica voce."
-                  />
-                )}
                 {totals.website_clicks > 0 && (
                   <SummaryRow
                     icon={<BarChart3 size={14} />}
@@ -1432,6 +1441,77 @@ function DateRangeSelector({
           </Popover.Content>
         </Popover.Portal>
       </Popover.Root>
+    </div>
+  );
+}
+
+// RateCard — tile compatto per la "rate strip" sotto l'hero.
+// Pensato per metriche derivate (save rate, share rate, views totali, engaged).
+// Meno imponente di KpiCard ma con tier pill visibile quando applicabile.
+function RateCard({ icon, label, value, tier, deltaPct, info }) {
+  return (
+    <div className="glass rounded-2xl p-4 transition hover:border-white/15">
+      <div className="flex items-center gap-2 text-white/55 text-[10px] mono-font mb-2 uppercase tracking-wider">
+        {icon}
+        <span className="truncate">{label}</span>
+        {info && <InfoTip text={info} />}
+      </div>
+      <div className="display-font text-2xl text-white font-light tabular-nums">
+        {value}
+      </div>
+      {(tier || deltaPct != null) && (
+        <div className="mt-2 flex items-center gap-2 flex-wrap">
+          {deltaPct != null && <DeltaPill value={deltaPct} />}
+          {tier && (
+            <span
+              className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] mono-font uppercase tracking-wider"
+              style={{ backgroundColor: `${tier.color}15`, color: tier.color }}
+            >
+              {tier.label}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ReachTrio — tre numeri sintetici accanto al titolo del reach chart:
+// totale, media giornaliera, picco (con data). Dà densità informativa alla
+// parte alta del panel che altrimenti è solo titolo + sottotitolo.
+function ReachTrio({ data }) {
+  const total = data.reduce((s, d) => s + (d.reach || 0), 0);
+  const avg = data.length ? total / data.length : 0;
+  const peak = data.reduce(
+    (m, d) => (d.reach > m.reach ? d : m),
+    { reach: 0, date: "—" }
+  );
+  return (
+    <div className="flex items-center gap-5 text-right">
+      <div>
+        <div className="text-[9px] mono-font uppercase tracking-wider text-white/40">
+          totale
+        </div>
+        <div className="text-sm mono-font text-white font-semibold tabular-nums">
+          {fmt(total)}
+        </div>
+      </div>
+      <div>
+        <div className="text-[9px] mono-font uppercase tracking-wider text-white/40">
+          media/g
+        </div>
+        <div className="text-sm mono-font text-white font-semibold tabular-nums">
+          {fmt(avg)}
+        </div>
+      </div>
+      <div>
+        <div className="text-[9px] mono-font uppercase tracking-wider text-white/40">
+          picco · {peak.date}
+        </div>
+        <div className="text-sm mono-font text-[#EDE5D0] font-semibold tabular-nums">
+          {fmt(peak.reach)}
+        </div>
+      </div>
     </div>
   );
 }

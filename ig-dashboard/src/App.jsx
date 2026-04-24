@@ -36,10 +36,16 @@ import {
 import { TOKEN, PAGE_ID, API } from "./config.js";
 import { generateFakeData, isFakeToken } from "./fakeData.js";
 
-const FAKE_MODE = isFakeToken(TOKEN);
 // Static mode: il build è stato generato dal workflow publish-dashboard (GH Pages).
 // I dati vengono da /data.json pre-generato invece che chiamare Graph API.
 const STATIC_MODE = import.meta.env.VITE_USE_STATIC === "true";
+// Fake mode solo se NON siamo in static (su CI il config.js viene stubbato con
+// TOKEN="" ma i dati sono reali dal JSON pre-renderato).
+const FAKE_MODE = !STATIC_MODE && isFakeToken(TOKEN);
+// BASE_URL è "/" in dev e "/the_pulp/" sul deploy GH Pages — lo usiamo per
+// prefissare gli asset statici referenziati da JSX (Vite non rewrite le
+// stringhe runtime, solo quelle in index.html).
+const ASSET = (p) => `${import.meta.env.BASE_URL || "/"}${p.replace(/^\//, "")}`;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 const fmt = (n) => {
@@ -440,7 +446,7 @@ export default function App() {
         <header className="flex items-start justify-between mb-10 fadein flex-wrap gap-4">
           <div className="flex items-start gap-5">
             <img
-              src="/logo-mark.jpeg"
+              src={ASSET("logo-mark.jpeg")}
               alt="The Pulp"
               className="w-14 h-14 rounded-2xl object-cover shrink-0 ring-1 ring-[#EDE5D0]/10"
             />

@@ -37,8 +37,12 @@ const DAY_SECONDS = 86400;
 // il dashboard gestisce la mancanza con sparkline nascosti).
 async function fetchHistoryFromTurso(postIds) {
   const url = process.env.TURSO_DATABASE_URL;
+  const tok = process.env.TURSO_AUTH_TOKEN;
+  console.log(
+    `[history] TURSO_DATABASE_URL present=${!!url} (len=${url?.length || 0}) · TURSO_AUTH_TOKEN present=${!!tok} (len=${tok?.length || 0})`
+  );
   if (!url) {
-    console.log("TURSO_DATABASE_URL assente — skip history, sparkline vuoti");
+    console.log("[history] TURSO_DATABASE_URL assente — skip history, sparkline vuoti");
     return { postHistory: {}, followerTrend: [] };
   }
   try {
@@ -89,11 +93,12 @@ async function fetchHistoryFromTurso(postIds) {
     }));
 
     console.log(
-      `History da Turso: ${Object.keys(postHistory).length} post con storico, ${followerTrend.length} giorni nel trend`
+      `[history] OK: ${Object.keys(postHistory).length} post con storico, ${followerTrend.length} giorni nel trend`
     );
     return { postHistory, followerTrend };
   } catch (e) {
-    console.warn(`History Turso fetch fallito: ${e.message} — continuo senza`);
+    console.error(`[history] Turso fetch FALLITO: ${e.message} — continuo senza`);
+    console.error(e.stack);
     return { postHistory: {}, followerTrend: [] };
   }
 }

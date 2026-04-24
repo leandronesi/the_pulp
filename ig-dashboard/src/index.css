@@ -6,6 +6,15 @@ body {
   margin: 0;
 }
 
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* ─── react-day-picker · brand Pulp ──────────────────────────────────────
    Override del CSS di default per allineare il calendar al tema editoriale
    green foresta + cream del dashboard. Variabili RDP customizzate e overrides

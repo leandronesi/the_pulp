@@ -701,17 +701,17 @@ export default function App() {
         .fadein { animation: fadein 0.6s ease both; }
       `}</style>
 
-      <div className="max-w-7xl mx-auto px-6 py-10 relative grain">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-10 relative grain">
         {/* Header */}
-        <header className="flex items-start justify-between mb-10 fadein flex-wrap gap-4">
-          <div className="flex items-start gap-5">
+        <header className="flex flex-col lg:flex-row lg:items-start lg:justify-between mb-8 sm:mb-10 fadein gap-5">
+          <div className="flex items-start gap-3 sm:gap-5 min-w-0">
             <img
               src={ASSET("logo-mark.jpeg")}
               alt="The Pulp"
-              className="w-14 h-14 rounded-2xl object-cover shrink-0 ring-1 ring-[#EDE5D0]/10"
+              className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl object-cover shrink-0 ring-1 ring-[#EDE5D0]/10"
             />
-            <div>
-              <div className="flex items-center gap-2 mb-3 text-xs uppercase tracking-[0.3em] text-[#EDE5D0]/70 mono-font">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2 mb-2 sm:mb-3 text-[11px] sm:text-xs uppercase tracking-[0.24em] sm:tracking-[0.3em] text-[#EDE5D0]/70 mono-font">
                 <Sparkles size={14} /> Instagram Insights
                 {FAKE_MODE && (
                   <span className="ml-1 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-200 text-[10px] tracking-normal normal-case">
@@ -719,7 +719,7 @@ export default function App() {
                   </span>
                 )}
               </div>
-              <h1 className="display-font text-5xl md:text-6xl font-light text-white leading-none">
+              <h1 className="display-font text-4xl sm:text-5xl md:text-6xl font-light text-white leading-[0.95] break-words">
                 {account ? (
                   <>
                     <span className="italic font-light">hello,</span>{" "}
@@ -732,7 +732,7 @@ export default function App() {
                 )}
               </h1>
               {account && (
-                <p className="mt-3 text-white/50 text-sm mono-font">
+                <p className="mt-2 sm:mt-3 text-white/50 text-xs sm:text-sm mono-font leading-relaxed">
                   {account.name && <>{account.name} · </>}
                   {fmt(account.media_count)} post totali · IG Business
                 </p>
@@ -740,13 +740,13 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex flex-col items-end gap-3">
+          <div className="flex flex-col items-stretch sm:items-end gap-3 w-full lg:w-auto">
             <button
               onClick={() => {
                 if (STATIC_MODE) setStaticData(null);
                 setRefreshKey((k) => k + 1);
               }}
-              className="glass px-4 py-2 rounded-full text-xs text-white/80 flex items-center gap-2 hover:text-white transition mono-font"
+              className="glass px-4 py-2 rounded-full text-xs text-white/80 flex items-center justify-center gap-2 hover:text-white transition mono-font w-full sm:w-auto"
             >
               <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
               Refresh
@@ -799,7 +799,7 @@ export default function App() {
         )}
 
         {loading && !account && (
-          <div className="glass rounded-3xl p-20 text-center">
+          <div className="glass rounded-3xl p-10 sm:p-20 text-center">
             <RefreshCw
               className="animate-spin mx-auto text-[#EDE5D0]"
               size={32}
@@ -818,16 +818,18 @@ export default function App() {
               onValueChange={changeTab}
               className="mb-8 fadein"
             >
-              <Tabs.List className="flex items-center gap-1 border-b border-white/5 mb-8">
-                <TabTrigger value="overview" icon={<LayoutDashboard size={14} />} label="overview" />
-                <TabTrigger value="posts" icon={<Grid3x3 size={14} />} label="posts" />
-                <TabTrigger value="audience" icon={<UsersRound size={14} />} label="audience" />
-              </Tabs.List>
+              <div className="overflow-x-auto no-scrollbar border-b border-white/5 mb-6 sm:mb-8">
+                <Tabs.List className="flex items-center gap-1 min-w-max">
+                  <TabTrigger value="overview" icon={<LayoutDashboard size={14} />} label="overview" />
+                  <TabTrigger value="posts" icon={<Grid3x3 size={14} />} label="posts" />
+                  <TabTrigger value="audience" icon={<UsersRound size={14} />} label="audience" />
+                </Tabs.List>
+              </div>
 
               <Tabs.Content value="overview" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">
 
             {/* Hero KPIs */}
-            <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10 fadein">
+            <section className="grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-4 gap-4 mb-10 fadein">
               <KpiCard
                 icon={<Users size={16} />}
                 label="Followers"
@@ -869,7 +871,7 @@ export default function App() {
             </section>
 
             {/* Rate strip — save/share/views/engaged (le metriche 2026) */}
-            <section className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8 fadein">
+            <section className="grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-4 gap-3 mb-8 fadein">
               <RateCard
                 icon={<Bookmark size={14} />}
                 label="Save rate"
@@ -909,8 +911,8 @@ export default function App() {
             {/* Reach chart + secondary panel */}
             <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-10 fadein">
               {reachChartData.length > 0 && (
-                <div className="glass rounded-3xl p-6 md:p-8 lg:col-span-2 flex flex-col">
-                  <div className="mb-6 flex items-baseline justify-between flex-wrap gap-3">
+                <div className="glass rounded-3xl p-5 sm:p-6 md:p-8 lg:col-span-2 flex flex-col">
+                  <div className="mb-6 flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-3">
                     <div>
                       <h2 className="display-font text-2xl text-white font-light">
                         Reach giornaliero
@@ -923,7 +925,8 @@ export default function App() {
                       <ReachTrio data={reachChartData} />
                     )}
                   </div>
-                  <div className="flex-1 min-h-[260px]">
+                  <div className="flex-1 min-h-[240px] sm:min-h-[260px] overflow-x-auto no-scrollbar">
+                    <div className="h-[240px] sm:h-[260px] min-w-[520px] sm:min-w-0">
                     <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={reachChartData}>
                       <defs>
@@ -970,11 +973,12 @@ export default function App() {
                       />
                     </AreaChart>
                   </ResponsiveContainer>
+                    </div>
                   </div>
                 </div>
               )}
 
-              <div className="glass rounded-3xl p-6 md:p-8 flex flex-col gap-4">
+              <div className="glass rounded-3xl p-5 sm:p-6 md:p-8 flex flex-col gap-4">
                 <div>
                   <h2 className="display-font text-2xl text-white font-light">
                     Sintesi
@@ -1039,7 +1043,7 @@ export default function App() {
             </div>
 
             {enrichedPosts.length === 0 && (
-              <div className="glass rounded-3xl p-12 text-center mb-10 fadein">
+              <div className="glass rounded-3xl p-8 sm:p-12 text-center mb-10 fadein">
                 <Grid3x3 className="mx-auto text-white/30 mb-4" size={40} />
                 <p className="display-font text-xl text-white/70 mb-2">
                   Nessun post nel periodo
@@ -1076,16 +1080,18 @@ export default function App() {
                   </div>
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-                  <div className="lg:col-span-2 grid grid-cols-2 gap-3">
+                  <div className="lg:col-span-2 grid grid-cols-1 min-[520px]:grid-cols-2 gap-3">
                     {contentMix.map((m) => (
                       <ContentTypeTile key={m.type} data={m} />
                     ))}
                   </div>
-                  <div className="glass rounded-3xl p-6 lg:col-span-3">
+                  <div className="glass rounded-3xl p-5 sm:p-6 lg:col-span-3">
                     <p className="text-xs text-white/40 mono-font mb-4 uppercase tracking-wider">
                       Reach medio per tipo
                     </p>
-                    <ResponsiveContainer width="100%" height={220}>
+                    <div className="overflow-x-auto no-scrollbar">
+                      <div className="min-w-[520px] h-[220px]">
+                    <ResponsiveContainer width="100%" height="100%">
                       <BarChart
                         data={contentMix.filter((m) => m.count > 0)}
                         layout="vertical"
@@ -1131,6 +1137,8 @@ export default function App() {
                         </Bar>
                       </BarChart>
                     </ResponsiveContainer>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </section>
@@ -1148,7 +1156,7 @@ export default function App() {
                       reach × engagement rate · quadranti mediani + outlier highlight
                     </p>
                   </div>
-                  <div className="glass rounded-full px-2 py-1 flex items-center gap-1">
+                  <div className="glass rounded-2xl sm:rounded-full px-2 py-1 flex flex-wrap items-center gap-1 w-full sm:w-auto">
                     {[
                       { k: "reach", label: "Reach" },
                       { k: "er", label: "Engagement" },
@@ -1159,7 +1167,7 @@ export default function App() {
                       <button
                         key={k}
                         onClick={() => setSortMode(k)}
-                        className={`px-3 py-1.5 text-xs rounded-full transition mono-font ${
+                        className={`px-3 py-1.5 text-xs rounded-full transition mono-font whitespace-nowrap ${
                           sortMode === k
                             ? "bg-[#EDE5D0] text-[#0B3A30] font-semibold"
                             : "text-white/60 hover:text-white"
@@ -1171,8 +1179,10 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="glass rounded-3xl p-6 md:p-8 mb-6">
-                  <ResponsiveContainer width="100%" height={320}>
+                <div className="glass rounded-3xl p-5 sm:p-6 md:p-8 mb-6">
+                  <div className="overflow-x-auto no-scrollbar">
+                    <div className="min-w-[560px] h-[320px]">
+                  <ResponsiveContainer width="100%" height="100%">
                     <ScatterChart margin={{ top: 10, right: 20, bottom: 10, left: 10 }}>
                       <CartesianGrid
                         strokeDasharray="3 3"
@@ -1230,6 +1240,8 @@ export default function App() {
                       )}
                     </ScatterChart>
                   </ResponsiveContainer>
+                    </div>
+                  </div>
                   <div className="flex flex-wrap gap-4 mt-4 text-[11px] mono-font text-white/60">
                     {Object.entries(MEDIA_TYPE_COLORS).map(([t, c]) =>
                       scatterByType[t]?.length ? (
@@ -1280,7 +1292,7 @@ export default function App() {
 
             {/* Best time to post */}
             {enrichedPosts.length > 0 && (
-              <section className="glass rounded-3xl p-6 md:p-8 mb-10 fadein">
+              <section className="glass rounded-3xl p-5 sm:p-6 md:p-8 mb-10 fadein">
                 <div className="flex items-baseline justify-between mb-6 flex-wrap gap-3">
                   <div>
                     <h2 className="display-font text-2xl text-white font-light flex items-center gap-3">
@@ -1431,7 +1443,7 @@ export default function App() {
                 )}
               </div>
             ) : (
-              <div className="glass rounded-3xl p-12 text-center mb-10">
+              <div className="glass rounded-3xl p-8 sm:p-12 text-center mb-10">
                 <UsersRound className="mx-auto text-white/30 mb-4" size={40} />
                 <p className="display-font text-xl text-white/70 mb-2">
                   Audience non disponibile
@@ -1523,7 +1535,7 @@ function TabTrigger({ value, icon, label }) {
   return (
     <Tabs.Trigger
       value={value}
-      className="group relative px-5 py-3 text-sm mono-font uppercase tracking-[0.2em] text-white/40 hover:text-white/80 transition flex items-center gap-2 data-[state=active]:text-[#EDE5D0] focus:outline-none focus-visible:ring-1 focus-visible:ring-[#EDE5D0]/40 rounded-t-lg"
+      className="group relative px-3 sm:px-5 py-3 text-[11px] sm:text-sm mono-font uppercase tracking-[0.14em] sm:tracking-[0.2em] text-white/40 hover:text-white/80 transition flex items-center gap-2 data-[state=active]:text-[#EDE5D0] focus:outline-none focus-visible:ring-1 focus-visible:ring-[#EDE5D0]/40 rounded-t-lg whitespace-nowrap"
     >
       {icon}
       {label}
@@ -1588,14 +1600,14 @@ function DateRangeSelector({
       : 0;
 
   return (
-    <div className="glass rounded-full px-2 py-1 flex items-center gap-1">
+    <div className="glass rounded-3xl sm:rounded-full px-2 py-1 flex flex-wrap sm:flex-nowrap items-center gap-1 w-full sm:w-auto">
       {[7, 30, 90].map((d) => {
         const active = !isCustom && selection.preset === d;
         return (
           <button
             key={d}
             onClick={() => onPreset(d)}
-            className={`px-3 py-1.5 text-xs rounded-full transition mono-font ${
+            className={`px-3 py-1.5 text-xs rounded-full transition mono-font whitespace-nowrap ${
               active
                 ? "bg-[#EDE5D0] text-[#0B3A30] font-semibold"
                 : "text-white/60 hover:text-white"
@@ -1617,7 +1629,7 @@ function DateRangeSelector({
                 ? "Range custom disponibile solo in dev (il sito pubblico ha solo 7/30/90 pre-calcolati)"
                 : undefined
             }
-            className={`px-3 py-1.5 text-xs rounded-full transition mono-font flex items-center gap-1.5 ${
+            className={`px-3 py-1.5 text-xs rounded-full transition mono-font flex items-center gap-1.5 whitespace-nowrap max-w-full ${
               isCustom
                 ? "bg-[#EDE5D0] text-[#0B3A30] font-semibold"
                 : staticMode
@@ -1626,7 +1638,7 @@ function DateRangeSelector({
             }`}
           >
             <Calendar size={11} />
-            {customLabel}
+            <span className="truncate">{customLabel}</span>
           </button>
         </Popover.Trigger>
         <Popover.Portal>
@@ -1634,7 +1646,7 @@ function DateRangeSelector({
             sideOffset={10}
             align="end"
             collisionPadding={16}
-            className="z-[100] rounded-3xl p-5 shadow-2xl pulp-calendar"
+            className="z-[100] rounded-3xl p-4 sm:p-5 shadow-2xl pulp-calendar w-[min(calc(100vw-2rem),22rem)] sm:w-auto"
             style={{
               background:
                 "linear-gradient(180deg, rgba(22,79,63,0.98) 0%, rgba(11,58,48,0.98) 100%)",
@@ -1704,13 +1716,13 @@ function DateRangeSelector({
 // Meno imponente di KpiCard ma con tier pill visibile quando applicabile.
 function RateCard({ icon, label, value, tier, deltaPct, info }) {
   return (
-    <div className="glass rounded-2xl p-4 transition hover:border-white/15">
+    <div className="glass rounded-2xl p-4 sm:p-5 transition hover:border-white/15">
       <div className="flex items-center gap-2 text-white/55 text-[10px] mono-font mb-2 uppercase tracking-wider">
         {icon}
         <span className="truncate">{label}</span>
         {info && <InfoTip text={info} />}
       </div>
-      <div className="display-font text-2xl text-white font-light tabular-nums">
+      <div className="display-font text-[1.75rem] sm:text-2xl text-white font-light tabular-nums break-words">
         {value}
       </div>
       {(tier || deltaPct != null) && (
@@ -1741,7 +1753,7 @@ function ReachTrio({ data }) {
     { reach: 0, date: "—" }
   );
   return (
-    <div className="flex items-center gap-5 text-right">
+    <div className="flex flex-wrap sm:flex-nowrap items-center gap-4 sm:gap-5 text-left sm:text-right">
       <div>
         <div className="text-[9px] mono-font uppercase tracking-wider text-white/40">
           totale
@@ -1772,7 +1784,7 @@ function ReachTrio({ data }) {
 
 function KpiCard({ icon, label, value, accent, deltaPct, tier, tierLabel, sparkline, info }) {
   return (
-    <div className="glass rounded-2xl p-5 relative overflow-hidden group transition">
+    <div className="glass rounded-2xl p-4 sm:p-5 relative overflow-hidden group transition">
       <div
         className={`absolute -top-8 -right-8 w-24 h-24 rounded-full bg-gradient-to-br ${accent} opacity-20 blur-2xl group-hover:opacity-40 transition`}
       />
@@ -1781,7 +1793,7 @@ function KpiCard({ icon, label, value, accent, deltaPct, tier, tierLabel, sparkl
         <span className="uppercase tracking-wider">{label}</span>
         {info && <InfoTip text={info} side="bottom" />}
       </div>
-      <div className="display-font text-4xl text-white font-light">{value}</div>
+      <div className="display-font text-3xl sm:text-4xl text-white font-light break-words">{value}</div>
       <div className="mt-2 flex items-center gap-2 flex-wrap">
         {deltaPct != null && <DeltaPill value={deltaPct} />}
         {tier && (
@@ -1870,7 +1882,7 @@ function ContentMixStat({ label, info, value }) {
 function ContentTypeTile({ data }) {
   const bench = benchmarkTier(data.avgBenchmarkRatio);
   return (
-    <div className="glass rounded-2xl p-4">
+    <div className="glass rounded-2xl p-4 sm:p-5">
       <div className="flex items-center justify-between gap-2 mb-3">
         <div className="flex items-center gap-2">
           <span
@@ -2054,7 +2066,7 @@ function PostCard({ post, rank }) {
           </span>
         </div>
       </div>
-      <div className="p-4">
+      <div className="p-4 sm:p-5">
         {caption && (
           <p className="text-white/70 text-xs mb-3 line-clamp-2 leading-relaxed">
             {caption}
@@ -2083,7 +2095,7 @@ function PostCard({ post, rank }) {
             {curveMeta.label}
           </span>
         </div>
-        <div className="grid grid-cols-4 gap-2 text-center pt-3 border-t border-white/5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center pt-3 border-t border-white/5">
           <Metric
             icon={<TrendingUp size={11} />}
             value={fmt(post.reach)}
@@ -2141,7 +2153,7 @@ function AudiencePanel({ icon, title, data, colors, labelMap }) {
   const sorted = [...data].sort((a, b) => b.value - a.value);
   const total = sorted.reduce((s, r) => s + r.value, 0) || 1;
   return (
-    <div className="glass rounded-2xl p-5">
+    <div className="glass rounded-2xl p-4 sm:p-5">
       <div className="flex items-center gap-2 text-white/60 text-xs mono-font mb-4 uppercase tracking-wider">
         {icon}
         <span>{title}</span>

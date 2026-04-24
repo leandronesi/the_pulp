@@ -1,5 +1,17 @@
 # ig-dashboard · The Pulp
 
+## ⚠️ Prima di tutto: leggi `wiki/` e `TODO.md`
+
+Il progetto usa un **pattern Karpathy**: knowledge compounda in una wiki persistente invece che essere rigenerata ogni sessione.
+
+- **[../wiki/index.md](../wiki/index.md)** — catalogo di tutte le decisioni (ADR), concetti, audit
+- **[../wiki/log.md](../wiki/log.md)** — cronologico append-only delle modifiche strutturali
+- **[../TODO.md](../TODO.md)** — lista viva di cosa fare, ordinata per priorità. Prima di iniziare qualcosa, guarda qui
+
+Questo `CLAUDE.md` resta lo **schema**: descrive l'architettura dell'ig-dashboard (componenti, script, deploy). La **wiki** registra il perché delle scelte e concetti di dominio. Il **TODO** è operativo.
+
+Ogni volta che si prende una decisione non-banale: append entry in `wiki/log.md` + eventualmente nuova ADR in `wiki/decisions/`.
+
 ## Cos'è questo progetto
 
 Non è solo un dashboard — è la **base di un data analyst / social media manager AI** per l'account Instagram "The Pulp · Soave Sia il Vento". Il dashboard è la superficie visibile; l'obiettivo più ampio è che Claude Code diventi l'analista che monitora, diagnostica, produce briefing, e suggerisce il piano editoriale sulla base dei dati IG.

@@ -12,7 +12,7 @@ Lista viva. Aggiornata ad ogni sessione. Quello che è `[x]` non serve più disc
 
 ## ✅ Done (recente → vecchio)
 
-- [~] `scripts/briefing.js` v0.1 scaffold — [reports/briefing-2026-04-24-7d.md](reports/briefing-2026-04-24-7d.md) primo test. LLM narrative ancora da integrare
+- [x] `scripts/briefing.js` v0.2 con LLM narrative (OpenAI gpt-5.4-mini) — [reports/briefing-2026-04-24-7d.md](reports/briefing-2026-04-24-7d.md)
 - [x] Tooltip contestuali (InfoTip) su KPI/pill/sintesi — [wiki/log.md](wiki/log.md) 2026-04-24
 - [x] Dashboard arricchito: tier pill, sparkline per post, follower trend — [wiki/log.md](wiki/log.md) 2026-04-24
 - [x] Dashboard + skill + wiki pattern Karpathy consolidato — [wiki/log.md](wiki/log.md) 2026-04-24
@@ -40,7 +40,7 @@ Lista viva. Aggiornata ad ogni sessione. Quello che è `[x]` non serve più disc
 - [x] CLI: `npm run briefing -- --period=7d|14d|30d|90d --output=file|stdout`
 - [x] Output markdown in `reports/`
 - [x] Run_log entry kind='briefing'
-- [ ] **LLM narrative** — integrare Anthropic SDK per compilare sezioni `_[placeholder]_` (Headline, analisi hero/bottom, Azioni). Legge `.claude/skills/pulp-briefing/references/brand-context.md` come system prompt, usa Claude Opus 4.7
+- [x] **LLM narrative** — integrato OpenAI (`gpt-5.4-mini` default) con system prompt derivato da brand-context.md + benchmarks.md. Fallback placeholder se env key manca. Primo briefing LLM: [reports/briefing-2026-04-24-7d.md](reports/briefing-2026-04-24-7d.md)
 
 ### 3. Delivery briefing via Gmail MCP
 - [ ] Workflow cron lun 8:00 IT che genera briefing + lo invia

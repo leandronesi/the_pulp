@@ -12,6 +12,16 @@ Tipi di kind:
 
 ---
 
+## [2026-04-24] refactor | briefing.js v0.2 — LLM narrative via OpenAI
+- Integrato step 6 della skill: OpenAI API (default `gpt-5.4-mini`) compila Headline, analisi hero/bottom, 3 azioni
+- System prompt include brand-context.md + benchmarks.md letti da `.claude/skills/pulp-briefing/references/`
+- User prompt passa JSON con tutti i dati calcolati (numeri, hero, bottom, pattern)
+- Response format: `json_object` con schema `{ headline, heroAnalysis, bottomAnalysis, actions[3] }`
+- Fallback placeholder se `OPENAI_API_KEY` manca o `--no-llm`
+- Primo briefing LLM-powered generato: `reports/briefing-2026-04-24-7d.md` (4000 chars, 3397+721 tok)
+- Risultato buono: italiano editoriale, trattini, cita post concreto, azioni con cosa/perché/come-misurare
+- Limitazione osservata: con sample piccolo (1 daily_snapshot → reach 141) il tier ER "excellent" è distorto. L'LLM lo contestualizza parzialmente ma non dichiara esplicitamente la distorsione. Miglioreremo il prompt quando vedremo più briefing
+
 ## [2026-04-24] init | scripts/briefing.js — scaffold (v0.1)
 - Implementati step 1-5 e 7 della skill pulp-briefing come script Node standalone
 - Query su Turso: `daily_snapshot` aggregates + post del periodo con ultimo `post_snapshot`

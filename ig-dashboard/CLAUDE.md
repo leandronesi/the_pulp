@@ -178,7 +178,7 @@ Invocabili via `npm run <nome>` dalla root di `ig-dashboard/`:
 | `npm run snapshot` | [scripts/snapshot.js](scripts/snapshot.js) | **Full snapshot**: fetch completo → `daily_snapshot`, `post` + `post_snapshot` (tutti i 30), `audience_snapshot`. Pensato per cron giornaliero. |
 | `npm run snapshot:fresh` | [scripts/snapshot.js](scripts/snapshot.js) `--fresh-only` | **Fresh snapshot**: solo post pubblicati negli ultimi 7gg (configurabile via `FRESH_WINDOW_DAYS`), solo `post` + `post_snapshot`. Pensato per cron ogni 4h per curve di crescita fini. |
 | `npm run export-json` | [scripts/export-json.js](scripts/export-json.js) | Pre-renderizza `public/data.json` con 3 range (7/30/90g) per il deploy GitHub Pages. Graph API + Turso (per history). |
-| `npm run briefing` | [scripts/briefing.js](scripts/briefing.js) | Briefing (default 7g) leggendo Turso. Output markdown in `reports/briefing-YYYY-MM-DD-Nd.md`. Flag: `--period=7d\|14d\|30d\|90d`, `--output=file\|stdout`. Sezioni narrative ancora placeholder — LLM integration next step. |
+| `npm run briefing` | [scripts/briefing.js](scripts/briefing.js) | Briefing (default 7g) leggendo Turso + OpenAI per sezioni narrative. Output markdown in `reports/briefing-YYYY-MM-DD-Nd.md`. Flag: `--period=7d\|14d\|30d\|90d`, `--output=file\|stdout`, `--no-llm`. Env: `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-5.4-mini`). |
 
 **Risoluzione delle credenziali IG (in ordine di priorità):**
 1. `process.env.IG_PAGE_TOKEN` / `IG_PAGE_ID` / `IG_API` — utile su CI

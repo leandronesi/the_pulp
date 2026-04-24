@@ -1,32 +1,44 @@
 // Briefing generator — legge Turso, calcola aggregati, produce markdown.
 //
-// Scaffold della skill `pulp-briefing` (workflow 7-step):
+// Implementa la skill `pulp-briefing` (workflow 7-step):
 //   1. Validate data availability
 //   2. Current period aggregates
 //   3. Previous period aggregates (same length)
 //   4. Identify outliers (hero + bottom)
 //   5. Benchmark (tier IG)
-//   6. Brand voice synthesis    ← placeholder per LLM (vedi sotto)
+//   6. Brand voice synthesis    ← via OpenAI (gpt-5.4-mini di default)
 //   7. Draft report
 //
-// Lo step 6 (narrative) richiede LLM — per ora lascio `_[...]_` placeholder.
-// Implementazione Claude API arriverà in una iterazione successiva.
+// Lo step 6 (narrative) usa OPENAI_API_KEY. Se non settata o --no-llm,
+// le sezioni narrative escono come `_[placeholder]_` e il briefing resta
+// utilizzabile come data-only report.
 //
 // Uso:
 //   npm run briefing                → settimanale (7d), output in reports/
 //   npm run briefing -- --period=30d --output=stdout
+//   npm run briefing -- --no-llm    → salta OpenAI, solo dati + placeholder
 //
 // Flag supportati:
 //   --period=7d|14d|30d|90d   default 7d
 //   --output=file|stdout       default file
+//   --no-llm                   default false
 
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { getDb, todayIsoDate, startRunLog, endRunLog } from "./db.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPORTS_DIR = resolve(__dirname, "..", "..", "reports");
+const SKILL_REFS_DIR = resolve(
+  __dirname,
+  "..",
+  "..",
+  ".claude",
+  "skills",
+  "pulp-briefing",
+  "references"
+);
 
 // ─── CLI parsing ──────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
@@ -36,6 +48,7 @@ const argOf = (name, def) => {
 };
 const period = argOf("period", "7d");
 const outputMode = argOf("output", "file");
+const noLlm = args.includes("--no-llm");
 
 const DAYS = parseInt(period.replace(/\D/g, ""), 10);
 if (![7, 14, 30, 90].includes(DAYS)) {
@@ -167,9 +180,107 @@ async function getPostsInPeriod(db, sinceIso, untilIso) {
   });
 }
 
+// ─── LLM narrative (OpenAI) ───────────────────────────────────────────────
+
+function readSkillRef(filename) {
+  try {
+    return readFileSync(resolve(SKILL_REFS_DIR, filename), "utf8");
+  } catch (e) {
+    return null;
+  }
+}
+
+async function generateNarrative(ctx) {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key || noLlm) return null;
+
+  const model = process.env.OPENAI_MODEL || "gpt-5.4-mini";
+  const brandVoice = readSkillRef("brand-context.md");
+  const benchmarks = readSkillRef("benchmarks.md");
+
+  const systemPrompt = [
+    "Sei un analista Instagram che scrive briefing per l'account 'The Pulp · Soave Sia il Vento'.",
+    "Devi produrre SOLO le sezioni narrative di un briefing (headline, analisi post, azioni).",
+    "I numeri li produce già lo script in automatico — tu non ripetere i numeri a meno che siano indispensabili in una frase.",
+    "",
+    "=== BRAND VOICE E CONTESTO ===",
+    brandVoice || "(brand-context.md non trovato)",
+    "",
+    "=== BENCHMARK DI RIFERIMENTO ===",
+    benchmarks || "(benchmarks.md non trovato)",
+    "",
+    "=== OUTPUT ===",
+    "Ritorna esclusivamente un JSON con questa forma esatta:",
+    "{",
+    '  "headline": "1-2 frasi, la presa di posizione sul periodo",',
+    '  "heroAnalysis": "2-4 righe in italiano editoriale sul perché il post hero ha funzionato (o null se non c\'è hero)",',
+    '  "bottomAnalysis": "2-4 righe sul perché il sotto-media ha tenuto ER basso (o null se non presente)",',
+    '  "actions": [',
+    '    { "cosa": "azione concreta", "perche": "osservazione dati", "comeMisurare": "indicatore osservabile" },',
+    '    ...3 item totali',
+    "  ]",
+    "}",
+    "",
+    "Regole stringenti:",
+    "- Italiano editoriale, usa trattini per ritmo, NO emoji, NO marketing-speak inglese.",
+    "- Cita il post concreto (caption, tema) dove pertinente — mai 'un contenuto recente'.",
+    "- Se il sample è piccolo (dichiarato nei dati), dichiaralo nel tuo testo.",
+    "- Se un numero è evidentemente distorto (es. reach=100 e ER=12%), relativizza invece di celebrarlo.",
+    "- Le azioni devono essere misurabili: il come-misurare deve riferire a dati specifici (post analoghi, media del periodo, ecc).",
+  ].join("\n");
+
+  const userPrompt = [
+    "Ecco i dati calcolati per questo briefing:",
+    "",
+    "```json",
+    JSON.stringify(ctx, null, 2),
+    "```",
+    "",
+    "Scrivi le sezioni narrative come descritto.",
+  ].join("\n");
+
+  const body = {
+    model,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    response_format: { type: "json_object" },
+  };
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify(body),
+    });
+    const j = await res.json();
+    if (j.error) {
+      console.warn(`LLM error: ${j.error.message} — uso placeholder`);
+      return null;
+    }
+    const content = j.choices?.[0]?.message?.content;
+    if (!content) {
+      console.warn("LLM risposta vuota — uso placeholder");
+      return null;
+    }
+    const parsed = JSON.parse(content);
+    console.log(
+      `LLM (${model}): ${j.usage?.prompt_tokens}+${j.usage?.completion_tokens} tok`
+    );
+    return parsed;
+  } catch (e) {
+    console.warn(`LLM call fallita: ${e.message} — uso placeholder`);
+    return null;
+  }
+}
+
 // ─── Report assembly ──────────────────────────────────────────────────────
 
-function renderBriefing({ periodLabel, sinceDate, untilDate, days, current, prev, posts }) {
+function renderBriefing({ periodLabel, sinceDate, untilDate, days, current, prev, posts, narrative }) {
   const lines = [];
 
   const erCurrent =
@@ -201,9 +312,11 @@ function renderBriefing({ periodLabel, sinceDate, untilDate, days, current, prev
   // Headline
   lines.push("## Headline");
   lines.push("");
-  lines.push(
-    "_[da generare con LLM sui dati sotto — frase di apertura sintetica]_"
-  );
+  if (narrative?.headline) {
+    lines.push(narrative.headline);
+  } else {
+    lines.push("_[LLM non disponibile — OPENAI_API_KEY mancante o --no-llm]_");
+  }
   lines.push("");
 
   // Numeri
@@ -268,9 +381,13 @@ function renderBriefing({ periodLabel, sinceDate, untilDate, days, current, prev
     );
     if (heroPost.permalink) lines.push(`- [Vai al post](${heroPost.permalink})`);
     lines.push("");
-    lines.push(
-      "_[analisi del perché ha funzionato — LLM legge contesto post + benchmark periodo, produce 2-4 righe]_"
-    );
+    if (narrative?.heroAnalysis) {
+      lines.push(narrative.heroAnalysis);
+    } else {
+      lines.push(
+        "_[LLM non disponibile — analisi perché ha funzionato]_"
+      );
+    }
     lines.push("");
   } else {
     lines.push("Nessun post pubblicato nel periodo.");
@@ -302,7 +419,11 @@ function renderBriefing({ periodLabel, sinceDate, untilDate, days, current, prev
       );
       if (bottomPost.permalink) lines.push(`- [Vai al post](${bottomPost.permalink})`);
       lines.push("");
-      lines.push("_[analisi del perché ha tenuto un ER basso — LLM]_");
+      if (narrative?.bottomAnalysis) {
+        lines.push(narrative.bottomAnalysis);
+      } else {
+        lines.push("_[LLM non disponibile — analisi ER basso]_");
+      }
       lines.push("");
     }
   }
@@ -342,10 +463,19 @@ function renderBriefing({ periodLabel, sinceDate, untilDate, days, current, prev
   // Actions
   lines.push("## Azioni per il prossimo periodo");
   lines.push("");
-  lines.push(
-    "_[3 azioni concrete con format: **cosa** → **perché** (dati) → **come misurare** · generate da LLM sui pattern sopra, regole in [.claude/skills/pulp-briefing/references/brand-context.md](../../.claude/skills/pulp-briefing/references/brand-context.md) sezione 'Format delle recommendation nelle Azioni']_"
-  );
-  lines.push("");
+  if (narrative?.actions && Array.isArray(narrative.actions) && narrative.actions.length) {
+    narrative.actions.forEach((a, i) => {
+      lines.push(`### ${i + 1}. ${a.cosa || "—"}`);
+      if (a.perche) lines.push(`**Perché:** ${a.perche}`);
+      if (a.comeMisurare) lines.push(`**Come misurare:** ${a.comeMisurare}`);
+      lines.push("");
+    });
+  } else {
+    lines.push(
+      "_[LLM non disponibile — 3 azioni con format cosa/perché/come misurare]_"
+    );
+    lines.push("");
+  }
 
   // Method notes
   lines.push("## Note di metodo");
@@ -365,7 +495,9 @@ function renderBriefing({ periodLabel, sinceDate, untilDate, days, current, prev
 
   lines.push("---");
   lines.push(
-    `_Generato da scripts/briefing.js (v0.1 · scaffold). Le sezioni con \`_[placeholder]_\` sono da completare con analisi LLM (integrazione Anthropic API in iterazione successiva)._`
+    narrative
+      ? `_Generato da scripts/briefing.js (v0.2) · narrative sections via OpenAI ${process.env.OPENAI_MODEL || "gpt-5.4-mini"}._`
+      : `_Generato da scripts/briefing.js (v0.2 · data-only) · sezioni narrative con placeholder (LLM non invocato)._`
   );
   lines.push("");
 
@@ -400,6 +532,96 @@ async function main() {
     );
 
     const label = DAYS === 7 ? "settimanale" : DAYS === 30 ? "mensile" : `${DAYS}g`;
+
+    // Step 6: narrative via OpenAI (se disponibile)
+    const heroPost = posts.length > 0 ? [...posts].sort((a, b) => b.reach - a.reach)[0] : null;
+    const bottomCandidates = posts.filter((p) => p.reach >= 200);
+    const bottomPost =
+      bottomCandidates.length >= 2
+        ? [...bottomCandidates].sort((a, b) => a.er - b.er)[0]
+        : null;
+
+    const erCurrent =
+      current.totals.reach > 0
+        ? (current.totals.interactions / current.totals.reach) * 100
+        : null;
+    const erPrev =
+      prev && prev.totals.reach > 0
+        ? (prev.totals.interactions / prev.totals.reach) * 100
+        : null;
+
+    const patternsByType = (() => {
+      const by = {};
+      for (const p of posts) {
+        if (!by[p.mediaType]) by[p.mediaType] = { count: 0, reach: 0, interactions: 0 };
+        by[p.mediaType].count += 1;
+        by[p.mediaType].reach += p.reach;
+        by[p.mediaType].interactions += p.interactions;
+      }
+      return Object.entries(by).map(([t, v]) => ({
+        type: t,
+        count: v.count,
+        avgReach: v.count ? Math.round(v.reach / v.count) : 0,
+        avgEr: v.reach > 0 ? (v.interactions / v.reach) * 100 : 0,
+      }));
+    })();
+
+    const narrative = await generateNarrative({
+      periodLabel: label,
+      sinceDate,
+      untilDate,
+      days: DAYS,
+      daysCovered: current.daysCovered,
+      postsInPeriod: posts.length,
+      sampleWarning: current.daysCovered < 3 || posts.length < 2,
+      numeri: {
+        reach: current.totals.reach,
+        reachPrev: prev?.totals?.reach ?? null,
+        engaged: current.totals.engaged,
+        engagedPrev: prev?.totals?.engaged ?? null,
+        profileViews: current.totals.profile_views,
+        profileViewsPrev: prev?.totals?.profile_views ?? null,
+        interactions: current.totals.interactions,
+        interactionsPrev: prev?.totals?.interactions ?? null,
+        er: erCurrent,
+        erPrev,
+        erTier: erTier(erCurrent),
+        followersEnd: current.followersEnd,
+        followersDelta: current.followersDelta,
+      },
+      heroPost: heroPost
+        ? {
+            mediaType: heroPost.mediaType,
+            caption: heroPost.caption.slice(0, 300),
+            timestamp: heroPost.timestamp,
+            reach: heroPost.reach,
+            er: heroPost.er,
+            erTier: erTier(heroPost.er),
+            like: heroPost.like,
+            comments: heroPost.comments,
+            saved: heroPost.saved,
+            shares: heroPost.shares,
+            views: heroPost.views,
+            permalink: heroPost.permalink,
+          }
+        : null,
+      bottomPost: bottomPost
+        ? {
+            mediaType: bottomPost.mediaType,
+            caption: bottomPost.caption.slice(0, 300),
+            timestamp: bottomPost.timestamp,
+            reach: bottomPost.reach,
+            er: bottomPost.er,
+            like: bottomPost.like,
+            comments: bottomPost.comments,
+            saved: bottomPost.saved,
+            shares: bottomPost.shares,
+            permalink: bottomPost.permalink,
+          }
+        : null,
+      patternsByType,
+    });
+
     const markdown = renderBriefing({
       periodLabel: label,
       sinceDate,
@@ -408,6 +630,7 @@ async function main() {
       current,
       prev,
       posts,
+      narrative,
     });
 
     if (outputMode === "stdout") {

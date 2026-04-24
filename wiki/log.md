@@ -12,6 +12,14 @@ Tipi di kind:
 
 ---
 
+## [2026-04-24] feat | Date picker custom + state refactor
+- State `dateRange` (int) → `selection` (oggetto: preset o customFrom/customTo)
+- Derivati via useMemo: `days`, `sinceUnix`, `untilUnix` — single source of truth. useEffect watcha sinceUnix/untilUnix
+- Nuovo componente `DateRangeSelector`: 3 preset pills + bottone custom con popover (2 `<input type="date">` con max=oggi, apply/cancel, label dinamico "da 15 apr → 22 apr")
+- In static mode il custom è disabilitato (data.json ha solo 7/30/90 precomputati). Tooltip spiega il perché
+- Fetch useEffect ora usa `sinceUnix`/`untilUnix` direttamente: supporta qualunque range, il prev period viene sempre calcolato come span precedente di pari durata
+- Retrocompat: `dateRange` è ancora disponibile come alias per `days` nei label esistenti ("Reach · 15g", "ultimi 15 giorni") — nessun label hardcoded rotto
+
 ## [2026-04-24] feat | UX revamp: Radix tooltip + metriche 2026 (save rate, share rate, views)
 - Installato `@radix-ui/react-tooltip` (Radix usa Floating UI internamente → collision detection, auto-flip, portal corretto, ARIA nativo, keyboard). Rewrite completo di InfoTip come wrapper sottile sopra `RTooltip.*`. Rinominato import per evitare collisione con `Tooltip` di recharts.
 - **Reach rate** come nuovo pill nel hero KPI Reach (reach/follower × 100): tier viral >100% · strong 30-100% · normal 10-30% · low <10%. Un account da 474 vede subito se il contenuto è rimasto interno o ha bucato.

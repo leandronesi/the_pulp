@@ -159,7 +159,44 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [warnings, setWarnings] = useState([]);
-  const [dateRange, setDateRange] = useState(30);
+  // Selezione periodo: preset (7/30/90) o custom (da/a date picker).
+  // In static mode custom è disabilitato perché data.json ha solo preset precomputati.
+  const [selection, setSelection] = useState({
+    preset: 30,
+    customFrom: null, // Date o null
+    customTo: null,
+  });
+  const [customOpen, setCustomOpen] = useState(false);
+
+  const isCustom =
+    !!selection.customFrom && !!selection.customTo && !STATIC_MODE;
+
+  const { days, sinceUnix, untilUnix } = useMemo(() => {
+    if (isCustom) {
+      const sUnix = Math.floor(selection.customFrom.getTime() / 1000);
+      const uUnix = Math.floor(selection.customTo.getTime() / 1000);
+      const d = Math.max(1, Math.round((uUnix - sUnix) / 86400));
+      return { days: d, sinceUnix: sUnix, untilUnix: uUnix };
+    }
+    const uUnix = Math.floor(Date.now() / 1000);
+    const sUnix = uUnix - selection.preset * 86400;
+    return { days: selection.preset, sinceUnix: sUnix, untilUnix: uUnix };
+  }, [isCustom, selection]);
+
+  const dateRange = days; // retrocompat nei label/memo
+
+  const setPreset = (p) => {
+    setSelection({ preset: p, customFrom: null, customTo: null });
+    setCustomOpen(false);
+  };
+
+  const setCustom = (from, to) => {
+    if (!from || !to) return;
+    const f = from instanceof Date ? from : new Date(from);
+    const t = to instanceof Date ? to : new Date(to);
+    if (isNaN(f) || isNaN(t) || f >= t) return;
+    setSelection({ preset: null, customFrom: f, customTo: t });
+  };
   const [refreshKey, setRefreshKey] = useState(0);
   const [sortMode, setSortMode] = useState("reach");
   const [staticData, setStaticData] = useState(null);
@@ -238,9 +275,10 @@ export default function App() {
         if (pData.error) throw new Error(`Profile: ${pData.error.message}`);
         setAccount(pData);
 
-        const since = daysAgoTs(dateRange);
-        const until = Math.floor(Date.now() / 1000);
-        const sincePrev = daysAgoTs(2 * dateRange);
+        const since = sinceUnix;
+        const until = untilUnix;
+        const span = until - since;
+        const sincePrev = since - span;
         const untilPrev = since;
 
         const metrics = [
@@ -346,7 +384,7 @@ export default function App() {
       }
     };
     load();
-  }, [dateRange, refreshKey, staticData]);
+  }, [sinceUnix, untilUnix, refreshKey, staticData]);
 
   // ─── Derived ─────────────────────────────────────────────────────────────
   const totals = insights?.totals || {};
@@ -591,21 +629,18 @@ export default function App() {
               <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
               Refresh
             </button>
-            <div className="glass rounded-full px-2 py-1 flex items-center gap-1">
-              {[7, 30, 90].map((d) => (
-                <button
-                  key={d}
-                  onClick={() => setDateRange(d)}
-                  className={`px-3 py-1.5 text-xs rounded-full transition mono-font ${
-                    dateRange === d
-                      ? "bg-[#EDE5D0] text-[#0B3A30] font-semibold"
-                      : "text-white/60 hover:text-white"
-                  }`}
-                >
-                  {d}d
-                </button>
-              ))}
-            </div>
+            <DateRangeSelector
+              selection={selection}
+              isCustom={isCustom}
+              staticMode={STATIC_MODE}
+              customOpen={customOpen}
+              setCustomOpen={setCustomOpen}
+              onPreset={setPreset}
+              onCustom={setCustom}
+              days={days}
+              sinceUnix={sinceUnix}
+              untilUnix={untilUnix}
+            />
           </div>
         </header>
 
@@ -1223,6 +1258,146 @@ function InfoTip({ text, side = "top" }) {
         </RTooltip.Content>
       </RTooltip.Portal>
     </RTooltip.Root>
+  );
+}
+
+function DateRangeSelector({
+  selection,
+  isCustom,
+  staticMode,
+  customOpen,
+  setCustomOpen,
+  onPreset,
+  onCustom,
+  days,
+  sinceUnix,
+  untilUnix,
+}) {
+  const toIso = (unix) => {
+    const d = new Date(unix * 1000);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  const [draftFrom, setDraftFrom] = useState(toIso(sinceUnix));
+  const [draftTo, setDraftTo] = useState(toIso(untilUnix));
+
+  // Quando il selection cambia da fuori, aggiorna i draft
+  useEffect(() => {
+    setDraftFrom(toIso(sinceUnix));
+    setDraftTo(toIso(untilUnix));
+  }, [sinceUnix, untilUnix]);
+
+  const applyCustom = () => {
+    const f = new Date(draftFrom + "T00:00:00");
+    const t = new Date(draftTo + "T23:59:59");
+    if (!isNaN(f) && !isNaN(t) && f < t) {
+      onCustom(f, t);
+      setCustomOpen(false);
+    }
+  };
+
+  const customLabel = isCustom
+    ? `${new Date(sinceUnix * 1000).toLocaleDateString("it-IT", {
+        day: "2-digit",
+        month: "short",
+      })} → ${new Date(untilUnix * 1000).toLocaleDateString("it-IT", {
+        day: "2-digit",
+        month: "short",
+      })}`
+    : "custom";
+
+  return (
+    <div className="relative">
+      <div className="glass rounded-full px-2 py-1 flex items-center gap-1">
+        {[7, 30, 90].map((d) => {
+          const active = !isCustom && selection.preset === d;
+          return (
+            <button
+              key={d}
+              onClick={() => onPreset(d)}
+              className={`px-3 py-1.5 text-xs rounded-full transition mono-font ${
+                active
+                  ? "bg-[#EDE5D0] text-[#0B3A30] font-semibold"
+                  : "text-white/60 hover:text-white"
+              }`}
+            >
+              {d}d
+            </button>
+          );
+        })}
+        <button
+          onClick={() => !staticMode && setCustomOpen(!customOpen)}
+          disabled={staticMode}
+          className={`px-3 py-1.5 text-xs rounded-full transition mono-font flex items-center gap-1.5 ${
+            isCustom
+              ? "bg-[#EDE5D0] text-[#0B3A30] font-semibold"
+              : staticMode
+              ? "text-white/20 cursor-not-allowed"
+              : "text-white/60 hover:text-white"
+          }`}
+          title={
+            staticMode
+              ? "Custom disponibile solo in dev (il sito pubblico ha solo 7/30/90 pre-calcolati)"
+              : "Scegli date custom"
+          }
+        >
+          <Calendar size={11} />
+          {customLabel}
+        </button>
+      </div>
+
+      {customOpen && !staticMode && (
+        <div className="absolute right-0 mt-2 glass rounded-2xl p-4 z-50 min-w-[280px] shadow-2xl">
+          <div className="text-[10px] mono-font uppercase tracking-wider text-[#EDE5D0]/70 mb-3">
+            Custom range
+          </div>
+          <div className="flex flex-col gap-3 text-xs mono-font">
+            <label className="flex flex-col gap-1 text-white/60">
+              <span>da</span>
+              <input
+                type="date"
+                value={draftFrom}
+                onChange={(e) => setDraftFrom(e.target.value)}
+                max={draftTo}
+                className="bg-black/20 rounded-lg px-2 py-1.5 text-white border border-white/10 outline-none focus:border-[#EDE5D0]/40"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-white/60">
+              <span>a</span>
+              <input
+                type="date"
+                value={draftTo}
+                onChange={(e) => setDraftTo(e.target.value)}
+                min={draftFrom}
+                max={toIso(Math.floor(Date.now() / 1000))}
+                className="bg-black/20 rounded-lg px-2 py-1.5 text-white border border-white/10 outline-none focus:border-[#EDE5D0]/40"
+              />
+            </label>
+            <div className="flex items-center gap-2 mt-2">
+              <button
+                onClick={applyCustom}
+                className="flex-1 bg-[#EDE5D0] text-[#0B3A30] rounded-full px-3 py-1.5 text-xs font-semibold hover:bg-white transition"
+              >
+                applica
+              </button>
+              <button
+                onClick={() => setCustomOpen(false)}
+                className="text-white/60 hover:text-white px-3 py-1.5 text-xs transition"
+              >
+                annulla
+              </button>
+            </div>
+            <p className="text-[9px] text-white/40 mono-font leading-relaxed">
+              ~{Math.round((new Date(draftTo) - new Date(draftFrom)) / 86400000)}{" "}
+              giorni · confronto col periodo prec. di pari durata
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -12,6 +12,9 @@ Lista viva. Aggiornata ad ogni sessione. Quello che è `[x]` non serve più disc
 
 ## ✅ Done (recente → vecchio)
 
+- [x] **Refactor IA**: 3 tab (Overview/Posts/Audience) con URL hash + `postsInRange` memo + fallback 90d chunking — [wiki/decisions/007-tab-structure.md](wiki/decisions/007-tab-structure.md)
+- [x] **Date picker calendar**: Radix Popover + react-day-picker stilato brand — [wiki/log.md](wiki/log.md) 2026-04-24
+- [x] **Rate strip + reach trio + chart flex-grow**: bilanciamento layout overview — [wiki/log.md](wiki/log.md) 2026-04-24
 - [x] **Radix UI tooltip** + metriche 2026 (reach rate nel hero, save rate + share rate + views totali in sintesi, views pill su video/reel) — [wiki/log.md](wiki/log.md) 2026-04-24
 - [x] Installate skill `frontend-design` (Anthropic ufficiale) + `ui-ux-pro-max` — consultabili per evoluzioni UI future
 - [x] **Chat agent "Chiedi al Pulp"** dev-only con function calling su Turso — [wiki/decisions/006-chat-agent.md](wiki/decisions/006-chat-agent.md)

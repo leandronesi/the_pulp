@@ -55,25 +55,91 @@ export async function fetchProfile(gql, ig) {
   );
 }
 
-// Ritorna { totals: {metric: value}, errors: [str] }. Metriche che falliscono
-// sono null; il caller decide se segnalarle nei warnings.
+// Ritorna { totals: {metric: value}, errors: [str], fallbackUsed: [metric] }.
+// Per range > 30gg Meta ritorna spesso null su metric_type=total_value. In
+// quel caso proviamo il fallback: fetch del time series daily e somma. Non è
+// deduplicato cross-day (stesso utente visto in 2 giorni diversi conta 2) ma
+// è il massimo che possiamo avere su range lunghi. Il caller può segnalare
+// all'utente che il numero è "indicativo" via fallbackUsed.
 export async function fetchDayTotals(gql, ig, sinceUnix, untilUnix) {
   const out = {};
   const errors = [];
+  const fallbackUsed = [];
+  // Strategia per metrica: prima tenta total_value (dedupe corretto ma max 30gg).
+  // Se throw o null → fallback chunking: spezzetta il range in blocchi di
+  // ~28gg e somma i total_value di ognuno. Approssima ma dà un numero robusto
+  // anche per range lunghi.
+  const CHUNK_SECS = 28 * 86400;
+
+  const tryTotalValue = async (m, s, u) => {
+    const j = await gql(
+      `/${ig}/insights?metric=${m}&metric_type=total_value&period=day&since=${s}&until=${u}`
+    );
+    return j.data?.[0]?.total_value?.value ?? null;
+  };
+
+  const tryDailySum = async (m, s, u) => {
+    const daily = await gql(
+      `/${ig}/insights?metric=${m}&period=day&since=${s}&until=${u}`
+    );
+    const values = daily.data?.[0]?.values || [];
+    if (values.length === 0) return null;
+    return values.reduce((acc, v) => acc + (Number(v.value) || 0), 0);
+  };
+
+  const fetchChunked = async (m) => {
+    // Spezza il range in finestre ≤28gg e somma le singole total_value
+    let total = 0;
+    let haveSome = false;
+    let cursor = sinceUnix;
+    while (cursor < untilUnix) {
+      const end = Math.min(cursor + CHUNK_SECS, untilUnix);
+      try {
+        let v = await tryTotalValue(m, cursor, end);
+        if (v == null) {
+          v = await tryDailySum(m, cursor, end);
+        }
+        if (v != null) {
+          total += Number(v);
+          haveSome = true;
+        }
+      } catch {
+        /* chunk fallito, skippalo */
+      }
+      cursor = end;
+    }
+    return haveSome ? total : null;
+  };
+
   await Promise.all(
     METRICS_DAY.map(async (m) => {
+      const spanSecs = untilUnix - sinceUnix;
       try {
-        const j = await gql(
-          `/${ig}/insights?metric=${m}&metric_type=total_value&period=day&since=${sinceUnix}&until=${untilUnix}`
-        );
-        out[m] = j.data?.[0]?.total_value?.value ?? null;
+        if (spanSecs <= 30 * 86400) {
+          // Range breve: tenta total_value diretto
+          let v = await tryTotalValue(m, sinceUnix, untilUnix);
+          if (v == null) v = await tryDailySum(m, sinceUnix, untilUnix);
+          out[m] = v;
+        } else {
+          // Range lungo: chunking sempre. total_value globale non è affidabile.
+          const v = await fetchChunked(m);
+          out[m] = v;
+          if (v != null) fallbackUsed.push(m);
+        }
       } catch (e) {
-        errors.push(`${m}: ${e.message}`);
-        out[m] = null;
+        // Ultimo tentativo: chunking
+        try {
+          const v = await fetchChunked(m);
+          out[m] = v;
+          if (v != null) fallbackUsed.push(m);
+        } catch (e2) {
+          errors.push(`${m}: ${e2.message}`);
+          out[m] = null;
+        }
       }
     })
   );
-  return { totals: out, errors };
+  return { totals: out, errors, fallbackUsed };
 }
 
 // Helper comodo per calcolare since/until di un range in giorni

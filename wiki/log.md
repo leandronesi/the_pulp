@@ -12,6 +12,28 @@ Tipi di kind:
 
 ---
 
+## [2026-04-24] feat | Refactor IA: 3 tab (Overview/Posts/Audience) + fix date filter consistency + fallback 90d
+
+**Phase 1 — Tab structure** (ADR 007 da scrivere)
+- Installato `@radix-ui/react-tabs`. Tre tab al top level: Overview · Posts · Audience
+- TabTrigger custom con underline cream animato, icone lucide (LayoutDashboard/Grid3x3/UsersRound)
+- URL hash deep linking: `#overview`/`#posts`/`#audience`. F5 safe via stato in `window.location.hash` + listener hashchange
+- Animazione fade 300ms tra tab tramite `data-[state=active]` + tailwindcss-animate-style classes
+- Tab "Overview": hero KPIs + rate strip + reach chart + sintesi (lo "sguardo in 10 secondi")
+- Tab "Posts": content mix + post analysis + heatmap (deep-dive contenuti)
+- Tab "Audience": panels demographics con banner esplicito "lifetime — non cambia col date range"
+
+**Phase 2 — Date filter consistency**
+- Nuovo memo `postsInRange`: filtra `posts` per `timestamp ∈ [sinceUnix, untilUnix]`. Tutti i derivati (enrichedPosts, sortedPosts, scatterByType, contentMix, heatmap, postMetricsAgg) ora usano `postsInRange`
+- Banner in testa al tab Posts: "N post · Xg · +M fuori range" con InfoTip che spiega il limite dei 30 post fetched
+- Empty state quando il filtro taglia tutto: "Nessun post nel periodo" con icona + suggerimento di allargare il range
+- **Fallback 90d** in `ig-fetch.js/fetchDayTotals`: per range > 30gg Meta ritorna null su total_value. Ora spezzetta il range in chunk da ~28gg e somma i singoli total_value. Non è deduplicato cross-chunk (un utente visto in chunk 1 e 2 conta 2) ma dà numeri robusti. Verificato: 90d ora ha reach=14590 interactions=2339 engaged=447 invece di null
+- Array `fallbackUsed` ritornato al caller per eventuale segnalazione UX ("numero indicativo")
+
+**Phase 3 — Polish**
+- Empty state audience quando Meta blocca (sotto 100 follower engaged): icona UsersRound + spiegazione del perché
+- Header audience col pill `lifetime` in gold + disclaimer chiaro
+
 ## [2026-04-24] fix | Layout rebalance: rate strip + chart flex-grow + reach trio
 - Problema: Sintesi con 7 righe (save/share/views aggiunti) la rendeva molto alta, il reach chart panel si stretchava ma chart a `height={260}` fisso lasciava enorme vuoto sotto. Squilibrio visivo brutto.
 - Fix:

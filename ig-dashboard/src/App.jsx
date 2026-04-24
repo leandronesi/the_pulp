@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import * as RTooltip from "@radix-ui/react-tooltip";
 import * as Popover from "@radix-ui/react-popover";
+import * as Tabs from "@radix-ui/react-tabs";
 import { DayPicker } from "react-day-picker";
 import { it } from "date-fns/locale";
 import "react-day-picker/dist/style.css";
@@ -39,6 +40,9 @@ import {
   Globe2,
   Info,
   Image as ImageIcon,
+  LayoutDashboard,
+  Grid3x3,
+  UsersRound,
 } from "lucide-react";
 import { TOKEN, PAGE_ID, API } from "./config.js";
 import { generateFakeData, isFakeToken } from "./fakeData.js";
@@ -206,6 +210,30 @@ export default function App() {
   const [staticData, setStaticData] = useState(null);
   const [postHistory, setPostHistory] = useState({});
   const [followerTrend, setFollowerTrend] = useState([]);
+
+  // Tab attiva — sync con URL hash per deep linking + F5 safe.
+  // Valori validi: "overview", "posts", "audience".
+  const [activeTab, setActiveTab] = useState(() => {
+    if (typeof window === "undefined") return "overview";
+    const h = window.location.hash.replace("#", "");
+    return ["overview", "posts", "audience"].includes(h) ? h : "overview";
+  });
+
+  useEffect(() => {
+    const onHash = () => {
+      const h = window.location.hash.replace("#", "");
+      if (["overview", "posts", "audience"].includes(h)) setActiveTab(h);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  const changeTab = (t) => {
+    setActiveTab(t);
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", `#${t}`);
+    }
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -412,8 +440,24 @@ export default function App() {
     }));
   }, [insights]);
 
+  // Posts filtrati per il range selezionato: solo i post con timestamp
+  // dentro [sinceUnix, untilUnix]. Graph API /media ritorna sempre i 30 più
+  // recenti, quindi se il range > 30 post fetchati possiamo avere un clip.
+  // postsClippedCount ci dice se il filtro ha rimosso qualcosa per segnalare
+  // il limite all'utente.
+  const postsInRange = useMemo(() => {
+    const sinceMs = sinceUnix * 1000;
+    const untilMs = untilUnix * 1000;
+    return posts.filter((p) => {
+      const t = new Date(p.timestamp).getTime();
+      return t >= sinceMs && t <= untilMs;
+    });
+  }, [posts, sinceUnix, untilUnix]);
+
+  const postsOutsideRange = posts.length - postsInRange.length;
+
   const enrichedPosts = useMemo(() => {
-    return posts.map((p) => {
+    return postsInRange.map((p) => {
       const reach = metricOf(p, "reach");
       const saved = metricOf(p, "saved");
       const shares = metricOf(p, "shares");
@@ -422,7 +466,7 @@ export default function App() {
       const er = reach > 0 ? (interactions / reach) * 100 : 0;
       return { ...p, reach, saved, shares, views, interactions, er };
     });
-  }, [posts]);
+  }, [postsInRange]);
 
   const sortedPosts = useMemo(() => {
     const arr = [...enrichedPosts];
@@ -508,25 +552,17 @@ export default function App() {
   // Calcolate sui post visibili (feed fetched), quindi "indicative del periodo"
   // ma non garantite allineate con total_interactions di daily_snapshot.
   const postMetricsAgg = useMemo(() => {
-    if (!posts.length) return null;
+    if (!postsInRange.length) return null;
     let reachSum = 0;
     let savedSum = 0;
     let sharesSum = 0;
     let viewsSum = 0;
     let videoCount = 0;
-    for (const p of posts) {
-      const reach =
-        p.insights?.data?.find((x) => x.name === "reach")?.values?.[0]?.value ??
-        0;
-      const saved =
-        p.insights?.data?.find((x) => x.name === "saved")?.values?.[0]?.value ??
-        0;
-      const shares =
-        p.insights?.data?.find((x) => x.name === "shares")?.values?.[0]
-          ?.value ?? 0;
-      const views =
-        p.insights?.data?.find((x) => x.name === "views")?.values?.[0]?.value ??
-        0;
+    for (const p of postsInRange) {
+      const reach = metricOf(p, "reach");
+      const saved = metricOf(p, "saved");
+      const shares = metricOf(p, "shares");
+      const views = metricOf(p, "views");
       reachSum += reach;
       savedSum += saved;
       sharesSum += shares;
@@ -541,7 +577,7 @@ export default function App() {
       viewsTotal: viewsSum,
       videoCount,
     };
-  }, [posts]);
+  }, [postsInRange]);
 
   // Reach rate = reach del periodo / followers × 100
   const reachRate = useMemo(() => {
@@ -694,6 +730,20 @@ export default function App() {
 
         {account && (
           <>
+            {/* Tabs bar */}
+            <Tabs.Root
+              value={activeTab}
+              onValueChange={changeTab}
+              className="mb-8 fadein"
+            >
+              <Tabs.List className="flex items-center gap-1 border-b border-white/5 mb-8">
+                <TabTrigger value="overview" icon={<LayoutDashboard size={14} />} label="overview" />
+                <TabTrigger value="posts" icon={<Grid3x3 size={14} />} label="posts" />
+                <TabTrigger value="audience" icon={<UsersRound size={14} />} label="audience" />
+              </Tabs.List>
+
+              <Tabs.Content value="overview" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">
+
             {/* Hero KPIs */}
             <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10 fadein">
               <KpiCard
@@ -882,6 +932,41 @@ export default function App() {
                 )}
               </div>
             </section>
+              </Tabs.Content>
+
+              <Tabs.Content value="posts" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">
+
+            {/* Posts scope banner */}
+            <div className="mb-6 flex items-baseline gap-3 flex-wrap">
+              <h2 className="display-font text-3xl text-white font-light">
+                <span className="italic">post</span> nel periodo
+              </h2>
+              <span className="text-xs mono-font text-white/50">
+                {enrichedPosts.length} post · {dateRange}g
+                {postsOutsideRange > 0 && (
+                  <span className="text-white/30">
+                    {" · "}+{postsOutsideRange} fuori range
+                  </span>
+                )}
+              </span>
+              {postsOutsideRange > 0 && (
+                <InfoTip
+                  text={`Graph API ritorna sempre gli ultimi 30 post; ${postsOutsideRange} sono stati pubblicati prima del range selezionato e vengono esclusi da metriche, grafici e heatmap di questa tab.`}
+                />
+              )}
+            </div>
+
+            {enrichedPosts.length === 0 && (
+              <div className="glass rounded-3xl p-12 text-center mb-10 fadein">
+                <Grid3x3 className="mx-auto text-white/30 mb-4" size={40} />
+                <p className="display-font text-xl text-white/70 mb-2">
+                  Nessun post nel periodo
+                </p>
+                <p className="text-xs text-white/40 mono-font leading-relaxed max-w-sm mx-auto">
+                  Prova ad allargare il range temporale dal selettore in alto a destra, o controlla se ci sono post più vecchi fuori dai 30 fetched.
+                </p>
+              </div>
+            )}
 
             {/* Content mix */}
             {enrichedPosts.length > 0 && (
@@ -1160,51 +1245,71 @@ export default function App() {
                 </p>
               </section>
             )}
+              </Tabs.Content>
 
-            {/* Audience */}
-            {audience && (
-              <section className="mb-10 fadein">
-                <div className="mb-6">
-                  <h2 className="display-font text-3xl text-white font-light">
-                    <span className="italic">audience</span>
-                  </h2>
-                  <p className="text-xs text-white/40 mono-font mt-1">
-                    breakdown dei follower · lifetime
-                  </p>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {audience.gender && (
-                    <AudiencePanel
-                      icon={<Users size={16} />}
-                      title="Genere"
-                      data={audience.gender}
-                      colors={{
-                        F: "#D4A85C",
-                        M: "#7FB3A3",
-                        U: "#EDE5D0",
-                      }}
-                      labelMap={{ F: "Donne", M: "Uomini", U: "Non spec." }}
-                    />
-                  )}
-                  {audience.age && (
-                    <AudiencePanel
-                      icon={<Activity size={16} />}
-                      title="Età"
-                      data={audience.age}
-                      colors={null}
-                    />
-                  )}
-                  {(audience.city || audience.country) && (
-                    <AudiencePanel
-                      icon={<Globe2 size={16} />}
-                      title={audience.city ? "Top città" : "Top paesi"}
-                      data={(audience.city || audience.country).slice(0, 6)}
-                      colors={null}
-                    />
-                  )}
-                </div>
-              </section>
+              <Tabs.Content value="audience" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">
+
+            {/* Audience — lifetime disclaimer + panels */}
+            <div className="mb-6 fadein">
+              <div className="flex items-baseline gap-3 flex-wrap">
+                <h2 className="display-font text-3xl text-white font-light">
+                  <span className="italic">audience</span>
+                </h2>
+                <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] mono-font uppercase tracking-wider bg-[#D4A85C]/15 text-[#D4A85C]">
+                  lifetime
+                </span>
+              </div>
+              <p className="text-xs text-white/50 mono-font mt-2 leading-relaxed max-w-2xl">
+                Questi dati riguardano l'intera storia dell'account, non il periodo selezionato sopra. Demografia dei follower attuali.
+              </p>
+            </div>
+
+            {audience ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-10 fadein">
+                {audience.gender && (
+                  <AudiencePanel
+                    icon={<Users size={16} />}
+                    title="Genere"
+                    data={audience.gender}
+                    colors={{
+                      F: "#D4A85C",
+                      M: "#7FB3A3",
+                      U: "#EDE5D0",
+                    }}
+                    labelMap={{ F: "Donne", M: "Uomini", U: "Non spec." }}
+                  />
+                )}
+                {audience.age && (
+                  <AudiencePanel
+                    icon={<Activity size={16} />}
+                    title="Età"
+                    data={audience.age}
+                    colors={null}
+                  />
+                )}
+                {(audience.city || audience.country) && (
+                  <AudiencePanel
+                    icon={<Globe2 size={16} />}
+                    title={audience.city ? "Top città" : "Top paesi"}
+                    data={(audience.city || audience.country).slice(0, 6)}
+                    colors={null}
+                  />
+                )}
+              </div>
+            ) : (
+              <div className="glass rounded-3xl p-12 text-center mb-10">
+                <UsersRound className="mx-auto text-white/30 mb-4" size={40} />
+                <p className="display-font text-xl text-white/70 mb-2">
+                  Audience non disponibile
+                </p>
+                <p className="text-xs text-white/40 mono-font leading-relaxed max-w-sm mx-auto">
+                  Meta blocca i breakdown demografici sotto una certa soglia di follower attivi (~100). Appena superi la soglia, i dati compaiono automaticamente.
+                </p>
+              </div>
             )}
+
+              </Tabs.Content>
+            </Tabs.Root>
 
             <footer className="text-center text-white/30 text-xs mono-font pt-8 border-t border-white/5">
               {STATIC_MODE && staticData?.generatedAt
@@ -1278,6 +1383,21 @@ function InfoTip({ text, side = "top" }) {
 // Radix Popover rende in portal con collision detection (zero z-index drama).
 // Calendar stilato nel brand Pulp: Fraunces per mese, JetBrains Mono per numeri,
 // cream come selected, verde per hover. Locale italiano.
+// TabTrigger — trigger stilato per Radix Tabs. Underline cream sulla tab
+// attiva (data-state=active), hover discreto sulle inattive.
+function TabTrigger({ value, icon, label }) {
+  return (
+    <Tabs.Trigger
+      value={value}
+      className="group relative px-5 py-3 text-sm mono-font uppercase tracking-[0.2em] text-white/40 hover:text-white/80 transition flex items-center gap-2 data-[state=active]:text-[#EDE5D0] focus:outline-none focus-visible:ring-1 focus-visible:ring-[#EDE5D0]/40 rounded-t-lg"
+    >
+      {icon}
+      {label}
+      <span className="absolute inset-x-4 -bottom-px h-0.5 bg-[#EDE5D0] scale-x-0 group-data-[state=active]:scale-x-100 transition-transform origin-center" />
+    </Tabs.Trigger>
+  );
+}
+
 function DateRangeSelector({
   selection,
   isCustom,

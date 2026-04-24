@@ -162,10 +162,35 @@ Invocabili via `npm run <nome>` dalla root di `ig-dashboard/`:
 
 | Script | File | Cosa fa |
 |---|---|---|
-| `npm run init-db` | [scripts/init-db.js](scripts/init-db.js) | Apre/crea `data/pulp.db`, applica schema, stampa conteggi per conferma. Idempotente. |
-| `npm run snapshot` | [scripts/snapshot.js](scripts/snapshot.js) | Fetch IG corrente → scrive `daily_snapshot`, `post` + `post_snapshot`, `audience_snapshot`. In fake mode esce subito senza toccare il DB. Pensato per cron giornaliero. |
+| `npm run init-db` | [scripts/init-db.js](scripts/init-db.js) | Apre/crea il DB (Turso o locale), applica schema, stampa conteggi. Idempotente. |
+| `npm run snapshot` | [scripts/snapshot.js](scripts/snapshot.js) | **Full snapshot**: fetch completo → `daily_snapshot`, `post` + `post_snapshot` (tutti i 30), `audience_snapshot`. Pensato per cron giornaliero. |
+| `npm run snapshot:fresh` | [scripts/snapshot.js](scripts/snapshot.js) `--fresh-only` | **Fresh snapshot**: solo post pubblicati negli ultimi 7gg (configurabile via `FRESH_WINDOW_DAYS`), solo `post` + `post_snapshot`. Pensato per cron ogni 4h per curve di crescita fini. |
 
-Ogni script è ESM, importa `src/config.js` direttamente, carica `.env` tramite il flag `--env-file-if-exists` di Node 20+, e rispetta `isFakeToken(TOKEN)` per evitare di inquinare il DB con dati demo.
+**Risoluzione delle credenziali IG (in ordine di priorità):**
+1. `process.env.IG_PAGE_TOKEN` / `IG_PAGE_ID` / `IG_API` — utile su CI
+2. Import da `src/config.js` se il file esiste
+3. Stringa vuota → fake mode (esce senza scrivere)
+
+Ogni script è ESM, carica `.env` tramite il flag `--env-file-if-exists` di Node 20+, e rispetta `isFakeToken(TOKEN)`.
+
+## Scheduling cloud (GitHub Actions)
+
+Due workflow in [.github/workflows/](../.github/workflows/) runnano indipendentemente sul runner Ubuntu di GitHub Actions — non serve che il tuo PC sia acceso:
+
+| Workflow | Cron | Mode | Cattura |
+|---|---|---|---|
+| [snapshot-daily.yml](../.github/workflows/snapshot-daily.yml) | `0 22 * * *` (22:00 UTC) | full | Tutto: profilo, totali, 30 post, audience |
+| [snapshot-fresh.yml](../.github/workflows/snapshot-fresh.yml) | `5 */4 * * *` (ogni 4h, offset 5min) | fresh-only | Solo post pubblicati negli ultimi 7gg |
+
+Entrambi hanno `workflow_dispatch` → trigger manuale dalla UI GitHub (tab **Actions**).
+
+**GitHub Secrets necessari** (repo → Settings → Secrets and variables → Actions):
+- `IG_PAGE_TOKEN` — Page access token non-expiring
+- `IG_PAGE_ID` — `111507393712812`
+- `TURSO_DATABASE_URL` — URL del DB Turso
+- `TURSO_AUTH_TOKEN` — JWT del DB Turso
+
+I workflow NON committano nulla al repo. Il DB vive su Turso, accessibile anche dal locale (stesse env in `.env`).
 
 ## File principali
 

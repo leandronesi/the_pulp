@@ -1,0 +1,38 @@
+name: Snapshot IG · fresh every 4h
+
+# Cattura ad alta risoluzione SOLO dei post pubblicati negli ultimi 7 giorni.
+# 6 run/giorno (ogni 4h), così ogni post nuovo ha ~42 punti sulla curva di
+# crescita nella sua prima settimana di vita. I post vecchi fermi non
+# ricevono snapshot (filtro lato script), niente rumore sul DB.
+
+on:
+  schedule:
+    # 5 minuti dopo l'ora, ogni 4 ore UTC. Offset per non collidere col daily.
+    - cron: '5 */4 * * *'
+  workflow_dispatch:
+
+jobs:
+  snapshot-fresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ig-dashboard/package-lock.json
+
+      - name: Install
+        working-directory: ig-dashboard
+        run: npm ci
+
+      - name: Run fresh-only snapshot
+        working-directory: ig-dashboard
+        env:
+          IG_PAGE_TOKEN: ${{ secrets.IG_PAGE_TOKEN }}
+          IG_PAGE_ID: ${{ secrets.IG_PAGE_ID }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: node scripts/snapshot.js --fresh-only

@@ -194,9 +194,15 @@ async function writePosts(db, posts, fetchedAt, { freshOnly }) {
 
 async function main() {
   if (isFakeToken(TOKEN)) {
-    console.log(
-      "TOKEN vuoto (fake mode) → snapshot skippato. Configura IG_PAGE_TOKEN in env o src/config.js."
-    );
+    const msg =
+      "TOKEN vuoto → snapshot skippato. Configura IG_PAGE_TOKEN in env o src/config.js.";
+    // Su CI (GitHub Actions) falliamo rumorosi: un workflow verde ma senza
+    // scrittura è peggio di un workflow rosso. In locale (dev) esce silenzioso.
+    if (process.env.CI || process.env.GITHUB_ACTIONS) {
+      console.error(msg);
+      process.exit(1);
+    }
+    console.log(msg);
     process.exit(0);
   }
   if (!PAGE_ID) {

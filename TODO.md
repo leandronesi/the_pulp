@@ -42,10 +42,12 @@ Lista viva. Aggiornata ad ogni sessione. Quello che è `[x]` non serve più disc
 - [x] Run_log entry kind='briefing'
 - [x] **LLM narrative** — integrato OpenAI (`gpt-5.4-mini` default) con system prompt derivato da brand-context.md + benchmarks.md. Fallback placeholder se env key manca. Primo briefing LLM: [reports/briefing-2026-04-24-7d.md](reports/briefing-2026-04-24-7d.md)
 
-### 3. Delivery briefing via Gmail MCP
-- [ ] Workflow cron lun 8:00 IT che genera briefing + lo invia
-- [ ] MCP Gmail configuration (già disponibile in env)
-- [ ] Mittente e subject: "The Pulp · Briefing settimanale sett. NN"
+### 3. Delivery briefing settimanale (differito)
+⏸ **Differito** — schedulare un cron settimanale ora è inutile: con 1 giorno di snapshot il briefing esce distorto. Aspettare ~7-10 giorni che Turso si riempia, poi aggiungere:
+- [ ] Secret GitHub `OPENAI_API_KEY`
+- [ ] Workflow `.github/workflows/briefing-weekly.yml` cron `0 6 * * 1` (lun 8:00 IT estate / 7:00 inverno)
+- [ ] Step: npm run briefing → commit reports/ → push (notifica via GitHub commit email)
+- [ ] Fase 2: delivery email vera (Gmail MCP o Resend/Mailgun)
 
 ---
 

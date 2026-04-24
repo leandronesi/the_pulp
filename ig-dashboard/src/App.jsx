@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   XAxis,
   YAxis,
@@ -1062,27 +1063,73 @@ export default function App() {
 }
 
 // ─── Subcomponents ──────────────────────────────────────────────────────────
-// Tooltip piccolo accessibile via hover. Default apre verso l'alto
-// ("up") per evitare il clipping nei card con overflow-hidden.
-function InfoTip({ text, side = "up" }) {
-  const pos =
-    side === "up"
-      ? "bottom-full mb-2 left-0"
-      : "top-full mt-2 left-0";
+// Tooltip con React Portal: il popover vive su document.body via createPortal,
+// posizione calcolata da getBoundingClientRect del trigger. Così esce da
+// qualunque container con overflow:hidden e non viene coperto da stacking
+// context. Flip automatico up/down in base allo spazio disponibile.
+// Il prop `side` è ignorato (retrocompat): la direzione la decide il runtime.
+function InfoTip({ text }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0, openUp: false });
+  const triggerRef = useRef(null);
+
+  const show = () => {
+    if (!triggerRef.current) return;
+    const r = triggerRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - r.bottom;
+    const openUp = spaceBelow < 120;
+    setPos({
+      top: openUp
+        ? r.top + window.scrollY - 8
+        : r.bottom + window.scrollY + 8,
+      left: Math.min(
+        r.left + window.scrollX,
+        window.scrollX + window.innerWidth - 250
+      ),
+      openUp,
+    });
+    setOpen(true);
+  };
+  const hide = () => setOpen(false);
+
   return (
-    <span className="relative inline-flex items-center group/tip">
-      <Info
-        size={10}
-        className="text-white/40 group-hover/tip:text-white/90 cursor-help transition"
-      />
+    <>
       <span
-        className={`absolute ${pos} opacity-0 group-hover/tip:opacity-100 transition pointer-events-none z-20 w-60`}
+        ref={triggerRef}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          open ? hide() : show();
+        }}
+        className="inline-flex items-center cursor-help"
       >
-        <span className="block glass rounded-lg p-2 text-[10px] mono-font text-white/80 leading-relaxed normal-case tracking-normal">
-          {text}
-        </span>
+        <Info
+          size={10}
+          className="text-white/40 hover:text-white/90 transition"
+        />
       </span>
-    </span>
+      {open &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="pointer-events-none fixed z-[9999] w-60"
+            style={{
+              top: pos.top,
+              left: pos.left,
+              transform: pos.openUp ? "translateY(-100%)" : undefined,
+            }}
+          >
+            <div className="glass rounded-lg p-2 text-[10px] mono-font text-white/85 leading-relaxed normal-case tracking-normal shadow-2xl">
+              {text}
+            </div>
+          </div>,
+          document.body
+        )}
+    </>
   );
 }
 

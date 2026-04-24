@@ -12,6 +12,14 @@ Tipi di kind:
 
 ---
 
+## [2026-04-24] fix | InfoTip → React Portal (fix tooltip nascosti)
+- Bug: i tooltip erano clippati dai container con `overflow-hidden` (KpiCard, PostCard) e coperti dallo stacking context delle glass-card
+- Fix: InfoTip ora usa `createPortal` a `document.body`. Posizione calcolata da `getBoundingClientRect()` del trigger, `position:fixed` + `z-[9999]`
+- Auto-flip up/down in base allo spazio residuo (soglia 120px)
+- Anche clamp horizontal per non uscire dal viewport
+- Prop `side` ignorato in favore del flip automatico (retrocompat senza break)
+- Aggiunto handler click come fallback per touch device
+
 ## [2026-04-24] refactor | briefing.js v0.2 — LLM narrative via OpenAI
 - Integrato step 6 della skill: OpenAI API (default `gpt-5.4-mini`) compila Headline, analisi hero/bottom, 3 azioni
 - System prompt include brand-context.md + benchmarks.md letti da `.claude/skills/pulp-briefing/references/`

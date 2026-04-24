@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
+import * as RTooltip from "@radix-ui/react-tooltip";
 import {
   XAxis,
   YAxis,
@@ -106,6 +107,35 @@ const erTier = (er) => {
   if (er >= 3) return { label: "good", color: "#7FB3A3" };
   if (er >= 1) return { label: "avg", color: "#D4A85C" };
   return { label: "poor", color: "#D98B6F" };
+};
+
+// Reach rate (reach/follower). Benchmark per-post:
+// viral >100% · strong 30-100% · normal 10-30% · low <10%
+const reachRateTier = (rate) => {
+  if (rate == null || Number.isNaN(rate)) return null;
+  if (rate > 100) return { label: "viral", color: "#EDE5D0" };
+  if (rate >= 30) return { label: "strong", color: "#7FB3A3" };
+  if (rate >= 10) return { label: "normal", color: "#D4A85C" };
+  return { label: "low", color: "#D98B6F" };
+};
+
+// Save rate (saves/reach). In 2026 è la metrica top per qualità contenuto.
+// Da benchmarks settore: >2% excellent, 1-2% good, 0.5-1% avg, <0.5% poor
+const saveRateTier = (rate) => {
+  if (rate == null || Number.isNaN(rate)) return null;
+  if (rate > 2) return { label: "excellent", color: "#EDE5D0" };
+  if (rate >= 1) return { label: "good", color: "#7FB3A3" };
+  if (rate >= 0.5) return { label: "avg", color: "#D4A85C" };
+  return { label: "poor", color: "#D98B6F" };
+};
+
+// Share rate (shares/reach). Indicatore "vale la pena condividere".
+// >1.5% excellent, 0.5-1.5% good, <0.5% avg/poor
+const shareRateTier = (rate) => {
+  if (rate == null || Number.isNaN(rate)) return null;
+  if (rate > 1.5) return { label: "excellent", color: "#EDE5D0" };
+  if (rate >= 0.5) return { label: "good", color: "#7FB3A3" };
+  return { label: "avg", color: "#D4A85C" };
 };
 
 // Extract a metric value from the embedded insights array on a post
@@ -432,7 +462,53 @@ export default function App() {
     return { grid, maxAvg, total: enrichedPosts.length };
   }, [enrichedPosts]);
 
+  // Nuove metriche aggregate periodo: save rate, share rate, views totali.
+  // Calcolate sui post visibili (feed fetched), quindi "indicative del periodo"
+  // ma non garantite allineate con total_interactions di daily_snapshot.
+  const postMetricsAgg = useMemo(() => {
+    if (!posts.length) return null;
+    let reachSum = 0;
+    let savedSum = 0;
+    let sharesSum = 0;
+    let viewsSum = 0;
+    let videoCount = 0;
+    for (const p of posts) {
+      const reach =
+        p.insights?.data?.find((x) => x.name === "reach")?.values?.[0]?.value ??
+        0;
+      const saved =
+        p.insights?.data?.find((x) => x.name === "saved")?.values?.[0]?.value ??
+        0;
+      const shares =
+        p.insights?.data?.find((x) => x.name === "shares")?.values?.[0]
+          ?.value ?? 0;
+      const views =
+        p.insights?.data?.find((x) => x.name === "views")?.values?.[0]?.value ??
+        0;
+      reachSum += reach;
+      savedSum += saved;
+      sharesSum += shares;
+      if (p.media_type === "VIDEO" || p.media_type === "REELS") {
+        viewsSum += views;
+        videoCount += 1;
+      }
+    }
+    return {
+      saveRate: reachSum > 0 ? (savedSum / reachSum) * 100 : null,
+      shareRate: reachSum > 0 ? (sharesSum / reachSum) * 100 : null,
+      viewsTotal: viewsSum,
+      videoCount,
+    };
+  }, [posts]);
+
+  // Reach rate = reach del periodo / followers × 100
+  const reachRate = useMemo(() => {
+    if (!totals.reach || !account?.followers_count) return null;
+    return (totals.reach / account.followers_count) * 100;
+  }, [totals.reach, account?.followers_count]);
+
   return (
+    <RTooltip.Provider delayDuration={150} skipDelayDuration={300}>
     <div
       className="min-h-screen"
       style={{
@@ -601,8 +677,14 @@ export default function App() {
                 label={`Reach · ${dateRange}g`}
                 value={fmt(totals.reach)}
                 deltaPct={delta(totals.reach, totalsPrev.reach)}
+                tier={reachRateTier(reachRate)}
+                tierLabel={
+                  reachRate != null
+                    ? `${reachRate.toFixed(0)}% dei follower`
+                    : null
+                }
                 accent="from-[#8FB5A3] to-[#3E7A66]"
-                info={`Account UNICI che hanno visto almeno un contenuto negli ultimi ${dateRange} giorni. Un utente che vede 10 post conta 1 (dedupe automatico Meta).`}
+                info={`Account UNICI che hanno visto almeno un contenuto negli ultimi ${dateRange} giorni. Un utente che vede 10 post conta 1 (dedupe automatico Meta). Il pill "X% dei follower" è il reach rate: quanto hai bucato la cerchia. Viral >100%, strong 30-100%, normal 10-30%, low <10%.`}
               />
               <KpiCard
                 icon={<Activity size={16} />}
@@ -712,6 +794,32 @@ export default function App() {
                   deltaPct={delta(totals.profile_views, totalsPrev.profile_views)}
                   info="Volte che la pagina profilo è stata aperta nel periodo (non utenti unici, non click sul bio-link)."
                 />
+                {postMetricsAgg?.saveRate != null && (
+                  <SummaryRow
+                    icon={<Bookmark size={14} />}
+                    label="Save rate"
+                    value={fmtPct(postMetricsAgg.saveRate)}
+                    tier={saveRateTier(postMetricsAgg.saveRate)}
+                    info="Saves / Reach × 100 sui post visibili. Nel 2026 Meta dà peso ~5× ai salvataggi rispetto ai like per pushare il contenuto su esplora. >2% excellent · 1-2% good · 0.5-1% avg · <0.5% poor."
+                  />
+                )}
+                {postMetricsAgg?.shareRate != null && (
+                  <SummaryRow
+                    icon={<Share2 size={14} />}
+                    label="Share rate"
+                    value={fmtPct(postMetricsAgg.shareRate)}
+                    tier={shareRateTier(postMetricsAgg.shareRate)}
+                    info="Shares / Reach × 100. Indica 'vale la pena mandarlo a qualcuno'. Metrica forte di resonance per la community. >1.5% excellent · 0.5-1.5% good · <0.5% avg."
+                  />
+                )}
+                {postMetricsAgg?.videoCount > 0 && (
+                  <SummaryRow
+                    icon={<Film size={14} />}
+                    label={`Views (${postMetricsAgg.videoCount} video/reel)`}
+                    value={fmt(postMetricsAgg.viewsTotal)}
+                    info="Somma delle visualizzazioni su video e reel visibili. Diversa dal reach: una view conta ogni singola volta che il contenuto viene mostrato, anche allo stesso utente. Dal 2025 IG ha unificato 'impressions' e 'views' sotto quest'unica voce."
+                  />
+                )}
                 {totals.website_clicks > 0 && (
                   <SummaryRow
                     icon={<BarChart3 size={14} />}
@@ -1075,81 +1183,50 @@ export default function App() {
         />
       )}
     </div>
+    </RTooltip.Provider>
   );
 }
 
 // ─── Subcomponents ──────────────────────────────────────────────────────────
-// Tooltip con React Portal: il popover vive su document.body via createPortal,
-// posizione calcolata da getBoundingClientRect del trigger. Così esce da
-// qualunque container con overflow:hidden e non viene coperto da stacking
-// context. Flip automatico up/down in base allo spazio disponibile.
-// Il prop `side` è ignorato (retrocompat): la direzione la decide il runtime.
-function InfoTip({ text }) {
-  const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState({ top: 0, left: 0, openUp: false });
-  const triggerRef = useRef(null);
-
-  const show = () => {
-    if (!triggerRef.current) return;
-    const r = triggerRef.current.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - r.bottom;
-    const openUp = spaceBelow < 120;
-    setPos({
-      top: openUp
-        ? r.top + window.scrollY - 8
-        : r.bottom + window.scrollY + 8,
-      left: Math.min(
-        r.left + window.scrollX,
-        window.scrollX + window.innerWidth - 250
-      ),
-      openUp,
-    });
-    setOpen(true);
-  };
-  const hide = () => setOpen(false);
-
+// InfoTip — wrapper su @radix-ui/react-tooltip.
+// Radix usa Floating UI internamente → collision detection, auto-flip,
+// portal automatico fuori da overflow:hidden, ARIA accessibile, supporto
+// keyboard. Un ordine di grandezza meglio del nostro custom.
+function InfoTip({ text, side = "top" }) {
   return (
-    <>
-      <span
-        ref={triggerRef}
-        onMouseEnter={show}
-        onMouseLeave={hide}
-        onFocus={show}
-        onBlur={hide}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          open ? hide() : show();
-        }}
-        className="inline-flex items-center cursor-help"
-      >
-        <Info
-          size={10}
-          className="text-white/40 hover:text-white/90 transition"
-        />
-      </span>
-      {open &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <div
-            className="pointer-events-none fixed z-[9999] w-60"
-            style={{
-              top: pos.top,
-              left: pos.left,
-              transform: pos.openUp ? "translateY(-100%)" : undefined,
-            }}
-          >
-            <div className="glass rounded-lg p-2 text-[10px] mono-font text-white/85 leading-relaxed normal-case tracking-normal shadow-2xl">
-              {text}
-            </div>
-          </div>,
-          document.body
-        )}
-    </>
+    <RTooltip.Root delayDuration={150}>
+      <RTooltip.Trigger asChild>
+        <span
+          className="inline-flex items-center cursor-help ml-1"
+          onClick={(e) => {
+            // su touch il tap attiva anche il parent; fermiamo qui
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          <Info
+            size={10}
+            className="text-white/40 hover:text-white/90 transition"
+          />
+        </span>
+      </RTooltip.Trigger>
+      <RTooltip.Portal>
+        <RTooltip.Content
+          side={side}
+          align="start"
+          sideOffset={6}
+          collisionPadding={12}
+          className="z-[9999] w-60 glass rounded-lg p-2 text-[10px] mono-font text-white/85 leading-relaxed normal-case tracking-normal shadow-2xl data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in"
+        >
+          {text}
+          <RTooltip.Arrow className="fill-white/10" />
+        </RTooltip.Content>
+      </RTooltip.Portal>
+    </RTooltip.Root>
   );
 }
 
-function KpiCard({ icon, label, value, accent, deltaPct, tier, sparkline, info }) {
+function KpiCard({ icon, label, value, accent, deltaPct, tier, tierLabel, sparkline, info }) {
   return (
     <div className="glass rounded-2xl p-5 relative overflow-hidden group transition">
       <div
@@ -1158,7 +1235,7 @@ function KpiCard({ icon, label, value, accent, deltaPct, tier, sparkline, info }
       <div className="flex items-center gap-2 text-white/60 text-xs mono-font mb-3">
         {icon}
         <span className="uppercase tracking-wider">{label}</span>
-        {info && <InfoTip text={info} side="down" />}
+        {info && <InfoTip text={info} side="bottom" />}
       </div>
       <div className="display-font text-4xl text-white font-light">{value}</div>
       <div className="mt-2 flex items-center gap-2 flex-wrap">
@@ -1168,11 +1245,7 @@ function KpiCard({ icon, label, value, accent, deltaPct, tier, sparkline, info }
             className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] mono-font uppercase tracking-wider"
             style={{ backgroundColor: `${tier.color}15`, color: tier.color }}
           >
-            tier {tier.label}
-            <InfoTip
-              text="Tier IG basato su engagement rate. Excellent >6%, good 3-6%, average 1-3%, poor <1%. Riferimento: benchmark di settore 2025-2026."
-              side="up"
-            />
+            {tierLabel ? `${tier.label} · ${tierLabel}` : `tier ${tier.label}`}
           </span>
         )}
       </div>
@@ -1202,25 +1275,35 @@ function DeltaPill({ value }) {
       <span className="text-white/30">vs prec.</span>
       <InfoTip
         text="Variazione rispetto al periodo precedente di pari durata. Se stai guardando 7g, confronto coi 7g precedenti; se 30g, coi 30g precedenti."
-        side="up"
+        side="top"
       />
     </span>
   );
 }
 
-function SummaryRow({ icon, label, value, deltaPct, info }) {
+function SummaryRow({ icon, label, value, deltaPct, info, tier }) {
   return (
     <div className="flex items-center justify-between py-2 border-b border-white/5 last:border-b-0">
       <div className="flex items-center gap-2 text-white/60 text-xs mono-font">
         {icon}
         <span>{label}</span>
-        {info && <InfoTip text={info} side="down" />}
+        {info && <InfoTip text={info} side="top" />}
       </div>
       <div className="text-right">
         <div className="text-white text-lg mono-font font-semibold">{value}</div>
         {deltaPct != null && (
           <div className="mt-0.5">
             <DeltaPill value={deltaPct} />
+          </div>
+        )}
+        {tier && (
+          <div className="mt-0.5">
+            <span
+              className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] mono-font uppercase tracking-wider"
+              style={{ backgroundColor: `${tier.color}15`, color: tier.color }}
+            >
+              {tier.label}
+            </span>
           </div>
         )}
       </div>
@@ -1328,8 +1411,15 @@ function PostCard({ post, rank, history }) {
         <div className="absolute bottom-3 left-3 text-[10px] text-white/70 mono-font flex items-center gap-1">
           <Calendar size={10} /> {fmtDate(post.timestamp)}
         </div>
-        <div className="absolute bottom-3 right-3 text-[10px] mono-font px-2 py-0.5 rounded-full bg-black/40 text-white/80">
-          ER {post.er.toFixed(1)}%
+        <div className="absolute bottom-3 right-3 flex flex-col gap-1 items-end">
+          {isVideo && post.views > 0 && (
+            <span className="text-[10px] mono-font px-2 py-0.5 rounded-full bg-black/40 text-[#EDE5D0]">
+              {fmt(post.views)} views
+            </span>
+          )}
+          <span className="text-[10px] mono-font px-2 py-0.5 rounded-full bg-black/40 text-white/80">
+            ER {post.er.toFixed(1)}%
+          </span>
         </div>
       </div>
       <div className="p-4">

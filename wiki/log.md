@@ -12,6 +12,22 @@ Tipi di kind:
 
 ---
 
+## [2026-04-24] feat | UX revamp: Radix tooltip + metriche 2026 (save rate, share rate, views)
+- Installato `@radix-ui/react-tooltip` (Radix usa Floating UI internamente → collision detection, auto-flip, portal corretto, ARIA nativo, keyboard). Rewrite completo di InfoTip come wrapper sottile sopra `RTooltip.*`. Rinominato import per evitare collisione con `Tooltip` di recharts.
+- **Reach rate** come nuovo pill nel hero KPI Reach (reach/follower × 100): tier viral >100% · strong 30-100% · normal 10-30% · low <10%. Un account da 474 vede subito se il contenuto è rimasto interno o ha bucato.
+- **Save rate** in Sintesi (saves/reach × 100). Dai benchmark 2026 Meta dà peso ~5× ai salvataggi. Tier: >2% excellent, 1-2% good, 0.5-1% avg, <0.5% poor.
+- **Share rate** in Sintesi (shares/reach × 100). Tier: >1.5% excellent, 0.5-1.5% good, <0.5% avg.
+- **Views totali** in Sintesi per video/reel. Dal 2025 Meta ha unificato "impressions" in "views" (una voce sola).
+- **Views pill sulle thumbnail** dei post video/reel, in stack con ER pill (bottom-right).
+- Fonti benchmark: [Sprout Social 37 metrics 2026](https://sproutsocial.com/insights/instagram-metrics/), [Socialinsider 23 metrics](https://www.socialinsider.io/blog/instagram-metrics/), [Sociality.io IG analytics 2026](https://sociality.io/blog/instagram-analytics/).
+
+## [2026-04-24] feat | Installate skill frontend ufficiali (frontend-design Anthropic + ui-ux-pro-max)
+- Scaricate due skill comunitarie/ufficiali che saranno usate quando Claude lavorerà su UI in questo progetto:
+  - **[.claude/skills/anthropic-frontend-design/](../.claude/skills/anthropic-frontend-design/)** — skill ufficiale Anthropic (277k+ install). SKILL.md opinionato: evitare AI-slop aesthetics, typography distintiva (no Inter/Roboto), palette bold, motion con intentionality, layout inaspettati. Da `anthropics/skills` GitHub.
+  - **[.claude/skills/ui-ux-pro-max/](../.claude/skills/ui-ux-pro-max/)** — 2MB: SKILL.md di 45KB con 50+ stili, 161 palette, 57 font pairings, 99 UX guidelines, 25 chart types. CLI Python `scripts/search.py` per query design system. CSV data in `data/` + templates.
+- Motivazione: non fare "frontend brutti come la morte" (parole utente). Claude in sessioni future su UI deve consultarle prima di scrivere CSS/componenti.
+- Note: la CLI Python di ui-ux-pro-max richiede python3 installato per funzionare. La skill funziona anche senza — SKILL.md è leggibile da LLM e le CSV si possono parsare direttamente.
+
 ## [2026-04-24] feat | Chat agent dev-only ("Chiedi al Pulp")
 - ADR [006-chat-agent](decisions/006-chat-agent.md) — C3 (spiegatore + analista con query) via Vite middleware, Phase 1 solo in dev, Phase 2 futuro per Cloudflare Worker
 - **Backend**: [scripts/chat-plugin.js](../ig-dashboard/scripts/chat-plugin.js), plugin Vite con `apply:"serve"`. Registra `POST /api/chat` e `GET /api/chat-status`. System prompt da brand-context + benchmarks + schema + concetti wiki + dashboard state. Tool calling OpenAI con `queryTurso(sql)` — guard SELECT-only, reject keyword mutanti, enforce LIMIT, timeout implicito libsql

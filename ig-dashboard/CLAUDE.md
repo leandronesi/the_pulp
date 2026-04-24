@@ -209,6 +209,8 @@ Skill Claude Code per ruoli analitici ricorrenti. Ispirate a pattern consolidati
 | Skill | File | Quando invocarla |
 |---|---|---|
 | `pulp-briefing` | [.claude/skills/pulp-briefing/SKILL.md](../.claude/skills/pulp-briefing/SKILL.md) | Briefing settimanali/mensili sui dati IG — delta vs periodo prec., hero/bottom post, pattern, azioni. Basata su social-media-analyzer (7 step) + Stormy AI pattern skill.md come KPI/voice source-of-truth. |
+| `frontend-design` | [.claude/skills/anthropic-frontend-design/SKILL.md](../.claude/skills/anthropic-frontend-design/SKILL.md) | Skill ufficiale Anthropic. Invocala ogni volta che tocchi UI/styling/componenti React del dashboard. Linea guida: evitare AI-slop aesthetics, typography distintiva, palette bold intenzionale, motion con significato. |
+| `ui-ux-pro-max` | [.claude/skills/ui-ux-pro-max/SKILL.md](../.claude/skills/ui-ux-pro-max/SKILL.md) | Design intelligence database: 50+ stili, 161 palette, 57 font pairings, 99 UX guidelines, 25 chart types. Per decisioni di design system (colori, tipografia, layout) o review UI quality. CLI Python opzionale (`scripts/search.py`) per query mirate. |
 
 La skill `pulp-briefing` include sotto [references/](../.claude/skills/pulp-briefing/references/): `schema.md` (query tipiche su Turso), `brand-context.md` (voice + audience Pulp), `benchmarks.md` (tier IG per ER, reach, growth).
 

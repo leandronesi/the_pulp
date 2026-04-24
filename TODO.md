@@ -12,6 +12,8 @@ Lista viva. Aggiornata ad ogni sessione. Quello che è `[x]` non serve più disc
 
 ## ✅ Done (recente → vecchio)
 
+- [x] **Radix UI tooltip** + metriche 2026 (reach rate nel hero, save rate + share rate + views totali in sintesi, views pill su video/reel) — [wiki/log.md](wiki/log.md) 2026-04-24
+- [x] Installate skill `frontend-design` (Anthropic ufficiale) + `ui-ux-pro-max` — consultabili per evoluzioni UI future
 - [x] **Chat agent "Chiedi al Pulp"** dev-only con function calling su Turso — [wiki/decisions/006-chat-agent.md](wiki/decisions/006-chat-agent.md)
 - [x] Debiti tecnici: unify fetch in `scripts/ig-fetch.js`, audience da Turso, cleanup locale — [wiki/log.md](wiki/log.md) 2026-04-24
 - [x] `scripts/briefing.js` v0.2 con LLM narrative (OpenAI gpt-5.4-mini) — [reports/briefing-2026-04-24-7d.md](reports/briefing-2026-04-24-7d.md)

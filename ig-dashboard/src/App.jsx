@@ -37,6 +37,9 @@ import { TOKEN, PAGE_ID, API } from "./config.js";
 import { generateFakeData, isFakeToken } from "./fakeData.js";
 
 const FAKE_MODE = isFakeToken(TOKEN);
+// Static mode: il build è stato generato dal workflow publish-dashboard (GH Pages).
+// I dati vengono da /data.json pre-generato invece che chiamare Graph API.
+const STATIC_MODE = import.meta.env.VITE_USE_STATIC === "true";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 const fmt = (n) => {
@@ -105,12 +108,43 @@ export default function App() {
   const [dateRange, setDateRange] = useState(30);
   const [refreshKey, setRefreshKey] = useState(0);
   const [sortMode, setSortMode] = useState("reach");
+  const [staticData, setStaticData] = useState(null);
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
       setError(null);
       const warns = [];
+
+      // Static mode: dati pre-generati da scripts/export-json.js (deploy pubblico).
+      // Fetch JSON una sola volta, poi cambi di dateRange usano la cache.
+      if (STATIC_MODE) {
+        try {
+          let data = staticData;
+          if (!data) {
+            const res = await fetch(
+              (import.meta.env.BASE_URL || "/") + "data.json"
+            );
+            data = await res.json();
+            setStaticData(data);
+          }
+          setAccount(data.profile);
+          const range = data.ranges?.[dateRange] || data.ranges?.[30];
+          setInsights({
+            totals: range?.totals || {},
+            reachDaily: range?.reachDaily || [],
+          });
+          setInsightsPrev({ totals: range?.totalsPrev || {} });
+          setPosts(data.posts || []);
+          setAudience(data.audience);
+          setWarnings(range?.warnings || []);
+        } catch (e) {
+          setError(`Impossibile caricare data.json: ${e.message}`);
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
 
       // Demo mode: TOKEN vuoto → dati fake, niente fetch.
       if (FAKE_MODE) {
@@ -252,7 +286,7 @@ export default function App() {
       }
     };
     load();
-  }, [dateRange, refreshKey]);
+  }, [dateRange, refreshKey, staticData]);
 
   // ─── Derived ─────────────────────────────────────────────────────────────
   const totals = insights?.totals || {};
@@ -442,7 +476,10 @@ export default function App() {
 
           <div className="flex flex-col items-end gap-3">
             <button
-              onClick={() => setRefreshKey((k) => k + 1)}
+              onClick={() => {
+                if (STATIC_MODE) setStaticData(null);
+                setRefreshKey((k) => k + 1);
+              }}
               className="glass px-4 py-2 rounded-full text-xs text-white/80 flex items-center gap-2 hover:text-white transition mono-font"
             >
               <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
@@ -969,8 +1006,15 @@ export default function App() {
             )}
 
             <footer className="text-center text-white/30 text-xs mono-font pt-8 border-t border-white/5">
-              dati live · facebook graph api v21 ·{" "}
-              {new Date().toLocaleString("it-IT")}
+              {STATIC_MODE && staticData?.generatedAt
+                ? `snapshot generato ${new Date(
+                    staticData.generatedAt
+                  ).toLocaleString("it-IT")} · facebook graph api v21`
+                : FAKE_MODE
+                ? "demo mode · dati fake"
+                : `dati live · facebook graph api v21 · ${new Date().toLocaleString(
+                    "it-IT"
+                  )}`}
             </footer>
           </>
         )}

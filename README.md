@@ -50,6 +50,10 @@ Con `TOKEN = ""` in config.js il dashboard gira in **demo mode** con dati fake �
 - ✅ Script `npm run snapshot` per popolare il DB
 - ✅ Storage cloud su Turso (libsql), fallback locale se `.env` non configurato
 - ✅ Scheduling automatico via GitHub Actions: daily full (22 UTC) + fresh-only ogni 4h per le curve di crescita dei post nuovi
+- ✅ Deploy pubblico statico su GitHub Pages (pre-renderato ogni 4h, token mai nel bundle)
+- ✅ Skill `pulp-briefing` formalizzata in `.claude/skills/` per briefing settimanali/mensili in italiano col brand voice
+- 🔜 Implementazione `scripts/briefing.js` (automazione del workflow della skill, output markdown in `reports/`)
+- 🔜 Delivery briefing via Gmail MCP
 - 🔜 Briefing settimanale via Gmail MCP
 - 🔜 Post-mortem on-demand
 - 🔜 Editor piano editoriale basato su storico

@@ -1,0 +1,71 @@
+name: Publish dashboard · GitHub Pages
+
+# Pre-rendera data.json (chiamate Graph API con token da Secrets), builda Vite
+# e deploya su GitHub Pages. Gira ogni 4h in sincronia col fresh snapshot, più
+# su ogni push a main (così un cambio UI arriva subito).
+
+on:
+  schedule:
+    - cron: '15 */4 * * *'  # 15 min dopo l'ora, ogni 4h (offset dai snapshot)
+  push:
+    branches: [main]
+    paths:
+      - 'ig-dashboard/**'
+      - '.github/workflows/publish-dashboard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Una sola run concorrente; se ne parte un'altra mentre questa gira, attende.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ig-dashboard/package-lock.json
+
+      - name: Install
+        working-directory: ig-dashboard
+        run: npm ci
+
+      - name: Export data.json from Graph API
+        working-directory: ig-dashboard
+        env:
+          IG_PAGE_TOKEN: ${{ secrets.IG_PAGE_TOKEN }}
+          IG_PAGE_ID: ${{ secrets.IG_PAGE_ID }}
+        run: node scripts/export-json.js
+
+      - name: Build static site
+        working-directory: ig-dashboard
+        env:
+          VITE_USE_STATIC: 'true'
+          VITE_PUBLIC_PATH: /the_pulp/
+        run: npm run build
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ig-dashboard/dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

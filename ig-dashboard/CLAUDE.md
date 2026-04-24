@@ -165,6 +165,7 @@ Invocabili via `npm run <nome>` dalla root di `ig-dashboard/`:
 | `npm run init-db` | [scripts/init-db.js](scripts/init-db.js) | Apre/crea il DB (Turso o locale), applica schema, stampa conteggi. Idempotente. |
 | `npm run snapshot` | [scripts/snapshot.js](scripts/snapshot.js) | **Full snapshot**: fetch completo → `daily_snapshot`, `post` + `post_snapshot` (tutti i 30), `audience_snapshot`. Pensato per cron giornaliero. |
 | `npm run snapshot:fresh` | [scripts/snapshot.js](scripts/snapshot.js) `--fresh-only` | **Fresh snapshot**: solo post pubblicati negli ultimi 7gg (configurabile via `FRESH_WINDOW_DAYS`), solo `post` + `post_snapshot`. Pensato per cron ogni 4h per curve di crescita fini. |
+| `npm run export-json` | [scripts/export-json.js](scripts/export-json.js) | Pre-renderizza `public/data.json` con 3 range (7/30/90g) per il deploy GitHub Pages. Non tocca Turso, legge solo Graph API. |
 
 **Risoluzione delle credenziali IG (in ordine di priorità):**
 1. `process.env.IG_PAGE_TOKEN` / `IG_PAGE_ID` / `IG_API` — utile su CI
@@ -172,6 +173,41 @@ Invocabili via `npm run <nome>` dalla root di `ig-dashboard/`:
 3. Stringa vuota → fake mode (esce senza scrivere)
 
 Ogni script è ESM, carica `.env` tramite il flag `--env-file-if-exists` di Node 20+, e rispetta `isFakeToken(TOKEN)`.
+
+## Deploy pubblico (GitHub Pages)
+
+Il dashboard è deployato su GitHub Pages come sito statico pre-renderato. Pattern:
+
+1. Workflow [.github/workflows/publish-dashboard.yml](../.github/workflows/publish-dashboard.yml) gira ogni 4h (cron `15 */4 * * *`) + su ogni push a `main` che tocca `ig-dashboard/**`.
+2. Lo step "Export data.json" chiama la Graph API lato server (token dal GitHub Secret `IG_PAGE_TOKEN`) e scrive `ig-dashboard/public/data.json` con profilo, 30 post, audience e 3 range pre-calcolati (7/30/90g).
+3. Lo step "Build" esegue `VITE_USE_STATIC=true VITE_PUBLIC_PATH=/the_pulp/ npm run build`. Il flag static fa sì che [src/App.jsx](src/App.jsx) carichi `/data.json` invece di chiamare Graph API direttamente.
+4. Deploy via `actions/upload-pages-artifact` + `actions/deploy-pages`.
+
+**Sicurezza**: il Page token non finisce MAI nel bundle JS del sito pubblico. Le chiamate Graph API avvengono solo lato workflow (ambiente sicuro GitHub Actions). Chi visita il sito vede solo il JSON pre-renderato.
+
+**URL pubblica**: `https://leandronesi.github.io/the_pulp/` (dopo che Pages è abilitato con source "GitHub Actions" nelle repo Settings → Pages).
+
+**Dev locale resta invariato**: `npm run dev` usa il path live Graph API con token da `src/config.js`, come sempre.
+
+## Skills formalizzate (`.claude/skills/`)
+
+Skill Claude Code per ruoli analitici ricorrenti. Ispirate a pattern consolidati nella community (vedi "Ricerca di riferimento" sotto), non inventate ex-novo.
+
+| Skill | File | Quando invocarla |
+|---|---|---|
+| `pulp-briefing` | [.claude/skills/pulp-briefing/SKILL.md](../.claude/skills/pulp-briefing/SKILL.md) | Briefing settimanali/mensili sui dati IG — delta vs periodo prec., hero/bottom post, pattern, azioni. Basata su social-media-analyzer (7 step) + Stormy AI pattern skill.md come KPI/voice source-of-truth. |
+
+La skill `pulp-briefing` include sotto [references/](../.claude/skills/pulp-briefing/references/): `schema.md` (query tipiche su Turso), `brand-context.md` (voice + audience Pulp), `benchmarks.md` (tier IG per ER, reach, growth).
+
+## Ricerca di riferimento
+
+Aprile 2026, esploriamo cosa esisteva già nel mondo Claude Code + social per non reinventare. Risorse consultate e pattern incorporati:
+
+- [alirezarezvani/claude-skills — social-media-analyzer](https://github.com/alirezarezvani/claude-skills/blob/main/marketing-skill/social-media-analyzer/SKILL.md) — **workflow a 7 step** (validate → compute per-post → aggregate → ROI → benchmark → identify → recommend), riadattato in `pulp-briefing/SKILL.md` (no ROI step perché non abbiamo spend pubblicitario).
+- [moboutrig/instagram-claude-skill](https://github.com/moboutrig/instagram-claude-skill) — skill Python per publishing + analytics IG. Noi siamo **solo analytics**, senza publishing (Instagram Content Publishing è gated). Utile come referenza di copertura comandi.
+- [mcpware/instagram-mcp](https://github.com/mcpware/instagram-mcp) / [jlbadano/ig-mcp](https://github.com/jlbadano/ig-mcp) — MCP server IG Graph API, 23+ tool. Decisione: **non li usiamo**, preferiamo script Node diretti perché abbiamo più controllo sulla persistenza e sul flow fetch→Turso.
+- [Stormy AI — Automate Social Media Reporting with Claude Code](https://stormy.ai/blog/automate-social-media-reporting-claude-code) — pattern: `skill.md` come **source of truth** per KPI/brand voice/report format, **CLAUDE.md** per struttura progetto, **human-in-the-loop** sui report AI-generati. Tutti adottati.
+- [coreyhaines31/marketingskills](https://github.com/coreyhaines31/marketingskills) — collezione generica (CRO/copy/SEO/analytics). Meno verticale del nostro.
 
 ## Scheduling cloud (GitHub Actions)
 

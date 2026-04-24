@@ -23,3 +23,6 @@ Thumbs.db
 # SEGRETI: il Page access token vive qui
 # replica config.example.js → config.js e metti il tuo token
 ig-dashboard/src/config.js
+
+# Pre-render output del workflow publish-dashboard (generato, non committare)
+ig-dashboard/public/data.json

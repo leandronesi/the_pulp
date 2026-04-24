@@ -36,6 +36,17 @@ Lista viva. Aggiornata ad ogni sessione. Quello che è `[x]` non serve più disc
 
 ## 🔥 Prossimi (ordine suggerito)
 
+### 0. Analytics vNext roadmap (content + time + audience)
+- [~] **Milestone 1 — Performance & format signal**: aggiungere `velocity` (reach/giorno dalla publish date), confronto vs benchmark di nicchia in UI/briefing, scatter reach vs ER con quadranti e outlier, timeline primi 7 giorni reach/saved per post, lettura chiara di quali format scalano davvero
+- [x] **Milestone 1 — data contract**: `export-json.js` esteso con `postAnalytics` precomputato (velocity, lifecycle 7g, benchmark ratio, curve type) e logica shared in `src/analytics.js` per non appesantire `App.jsx`
+- [ ] **Milestone 1 — benchmark hygiene**: i benchmark devono restare relativi alla nicchia/account tier, non confronti assoluti da vanity metric; riusare e formalizzare `.claude/skills/pulp-briefing/references/benchmarks.md`
+- [ ] **Milestone 2 — Temporal intelligence**: evolvere la heatmap corrente in calendar heatmap stile GitHub contributions con overlay engagement/reach, pattern settimanali e primi segnali stagionali appena c'è abbastanza storico
+- [ ] **Milestone 2 — anomalie spiegate**: identificare "post virali inspiegabili" come outlier rispetto a un baseline account-specifico (format, ora, giorno, caption length, media_type), non come semplice top reach
+- [ ] **Milestone 2 — clustering corretto**: clustering automatico su feature numeriche standardizzate (`reach`, `ER`, `save/share rate`, `velocity`, publish hour); `media_type` solo come overlay/label, non come input k-means puro
+- [ ] **Milestone 3 — Audience loyalty proxy**: cohort analysis settimanale dei nuovi follower stimati da `daily_snapshot` + proxy di stickiness nel tempo; chiamarla "retention" solo se in futuro avremo dati follower-level, che oggi Meta non espone
+- [ ] **Milestone 3 — wording onesto**: evitare claim di "fedeltà misurata davvero" con i dati attuali; oggi possiamo misurare crescita netta, shift demographics e segnali di fedeltà proxy, non retention reale persona-per-persona
+- [ ] **Tech track**: tenere Recharts per KPI, area/bar e sparkline; introdurre **Apache ECharts** solo per scatter avanzato, calendar heatmap e annotazioni/outlier. Observable Plot resta opzione secondaria per report analitici, non prima scelta del dashboard
+
 ### 1. Primo briefing reale
 - [ ] Aspettare **≥5 daily_snapshot** accumulati (serve ~5 giorni dopo il 24/4 → ~29/4)
 - [ ] Invocare skill `pulp-briefing` interattiva: "fammi il briefing settimanale"
@@ -64,6 +75,10 @@ Lista viva. Aggiornata ad ogni sessione. Quello che è `[x]` non serve più disc
 - [x] **Growth curve per post** come sparkline in PostCard — scritto il 2026-04-24, curva si riempie via via che post_snapshot accumula
 - [x] **Follower trend** come sparkline nella KpiCard Followers — necessita ≥2 daily_snapshot per apparire
 - [x] **Benchmark pill** sotto ER nel hero — tier excellent/good/avg/poor
+- [x] **Velocity + benchmark ratio**: mostrato per post e per media type; rapporto vs benchmark atteso calcolato in `src/analytics.js`
+- [x] **Scatter v2**: quadranti reach/ER + outlier highlight implementati ancora in Recharts; clustering rinviato
+- [x] **Post grid v2**: card con timeline primi 7 giorni reach/saved e classificazione della curva di vita (front-loaded, steady, slow-burn)
+- [ ] **Calendar heatmap**: sostituire o affiancare la heatmap 7×6 con una vista calendario giorno-per-giorno e overlay engagement
 - [ ] **Audience shift**: delta tra due date sui breakdown demographics (serve ≥2 audience_snapshot)
 - [ ] Chart dedicato "Trend storico" con reach+engaged+interactions nel tempo (oltre al solo followers sparkline)
 - [ ] Quando un post ha storico ricco (>10 punti), permettere click → modal con chart full-size e tutte le metriche (reach/like/saved/shares) overlaid

@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { createClient } from "@libsql/client";
 import { isFakeToken } from "../src/fakeData.js";
+import { derivePostAnalytics } from "../src/analytics.js";
 import {
   createGql,
   loadCredentials,
@@ -204,6 +205,7 @@ async function main() {
   // Storico opzionale da Turso (post_snapshot + daily_snapshot)
   const postIds = posts.map((p) => p.id);
   const { postHistory, followerTrend } = await fetchHistoryFromTurso(postIds);
+  const postAnalytics = derivePostAnalytics(posts, postHistory, profile);
 
   const payload = {
     generatedAt: Date.now(),
@@ -213,6 +215,7 @@ async function main() {
     ranges,
     postHistory,
     followerTrend,
+    postAnalytics,
   };
 
   writeFileSync(OUT_FILE, JSON.stringify(payload));

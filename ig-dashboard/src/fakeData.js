@@ -39,6 +39,34 @@ const MEDIA_TYPES = [
   "CAROUSEL_ALBUM",
 ];
 
+function pickCurveType(type, rnd) {
+  const roll = rnd();
+  if (type === "REELS") {
+    if (roll < 0.58) return "front_loaded";
+    if (roll < 0.88) return "steady";
+    return "slow_burn";
+  }
+  if (type === "CAROUSEL_ALBUM") {
+    if (roll < 0.2) return "front_loaded";
+    if (roll < 0.62) return "steady";
+    return "slow_burn";
+  }
+  if (type === "VIDEO") {
+    if (roll < 0.46) return "front_loaded";
+    if (roll < 0.82) return "steady";
+    return "slow_burn";
+  }
+  if (roll < 0.14) return "front_loaded";
+  if (roll < 0.52) return "steady";
+  return "slow_burn";
+}
+
+function growthProgress(curveType, t) {
+  if (curveType === "front_loaded") return 1 - Math.exp(-6.4 * t);
+  if (curveType === "slow_burn") return Math.pow(t, 1.55);
+  return 1 - Math.exp(-3.7 * t);
+}
+
 export function generateFakeData(dateRange) {
   const rnd = seeded(42 + dateRange * 17);
   const r = (min, max) => min + rnd() * (max - min);
@@ -89,20 +117,25 @@ export function generateFakeData(dateRange) {
   // Post — sparsi nel range, circa 0.6 post/giorno, capped a 24
   const postCount = Math.min(24, Math.max(6, Math.floor(dateRange * 0.6)));
   const posts = [];
+  const curveByPostId = {};
   for (let i = 0; i < postCount; i++) {
+    const id = `fake_${i}_${dateRange}`;
     const type = MEDIA_TYPES[ri(0, MEDIA_TYPES.length)];
+    const curveType = pickCurveType(type, rnd);
     const daysBack = r(0.1, dateRange);
     // Distribuisci ore su tutto il giorno ma con skew verso sera/weekend
     const hourSkew = rnd() < 0.55 ? ri(17, 23) : ri(7, 22);
     const ts = new Date(now - daysBack * 86400000);
     ts.setHours(hourSkew, ri(0, 60), 0, 0);
 
-    const baseReachPost =
-      type === "REELS"
+    const surpriseBoost = rnd() < 0.12 ? r(1.55, 2.35) : r(0.82, 1.12);
+    const baseReachPost = Math.floor(
+      (type === "REELS"
         ? ri(1400, 5200)
         : type === "VIDEO"
         ? ri(700, 2400)
-        : ri(350, 1900);
+        : ri(350, 1900)) * surpriseBoost
+    );
     const like_count = Math.floor(baseReachPost * r(0.045, 0.13));
     const comments_count = Math.max(
       0,
@@ -116,7 +149,7 @@ export function generateFakeData(dateRange) {
         : baseReachPost;
 
     posts.push({
-      id: `fake_${i}_${dateRange}`,
+      id,
       caption: CAPTIONS[i % CAPTIONS.length],
       media_type: type,
       media_url: `https://picsum.photos/seed/pulp-${i}-${dateRange}/600/600`,
@@ -137,6 +170,7 @@ export function generateFakeData(dateRange) {
         ],
       },
     });
+    curveByPostId[id] = curveType;
   }
   posts.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
@@ -160,10 +194,10 @@ export function generateFakeData(dateRange) {
     const viewsFinal = p.insights.data.find((x) => x.name === "views").values[0]
       .value;
     const history = [];
+    const curveType = curveByPostId[p.id] || "steady";
     for (let i = 0; i < points; i++) {
       const t = i / (points - 1);
-      // curva tipo 1 - e^-5t → parte ripida poi plateau
-      const progress = 1 - Math.exp(-5 * t);
+      const progress = Math.min(1, growthProgress(curveType, t));
       const ts = publishMs + t * span;
       history.push({
         t: Math.floor(ts),

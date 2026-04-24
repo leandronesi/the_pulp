@@ -20,6 +20,9 @@ import {
   BarChart,
   Bar,
   Cell as BarCell,
+  LineChart,
+  Line,
+  ReferenceLine,
 } from "recharts";
 import {
   Users,
@@ -46,6 +49,15 @@ import {
 } from "lucide-react";
 import { TOKEN, PAGE_ID, API } from "./config.js";
 import { generateFakeData, isFakeToken } from "./fakeData.js";
+import {
+  CURVE_TYPE_META,
+  benchmarkTier,
+  deriveContentMix,
+  derivePostAnalytics,
+  deriveScatterMeta,
+  metricOf,
+  postInteractions,
+} from "./analytics.js";
 import Chat from "./Chat.jsx";
 
 // Chat agent solo in dev (dipende dal middleware /api/chat che non esiste
@@ -75,6 +87,12 @@ const fmt = (n) => {
 const fmtPct = (n) => {
   if (n == null || Number.isNaN(n)) return "—";
   return n.toFixed(1) + "%";
+};
+
+const fmtSignedPct = (n) => {
+  if (n == null || Number.isNaN(n)) return "—";
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toFixed(0)}%`;
 };
 
 const fmtDate = (d) =>
@@ -146,17 +164,48 @@ const shareRateTier = (rate) => {
   return { label: "avg", color: "#D4A85C" };
 };
 
+// Tier arrays per la Legenda — stesse soglie delle funzioni sopra, ordinate
+// dal peggiore al migliore (sinistra → destra nella barra).
+const ER_TIERS_LEGEND = [
+  { label: "poor", color: "#D98B6F", range: "<1%" },
+  { label: "avg", color: "#D4A85C", range: "1–3%" },
+  { label: "good", color: "#7FB3A3", range: "3–6%" },
+  { label: "excellent", color: "#EDE5D0", range: ">6%" },
+];
+const REACH_RATE_TIERS_LEGEND = [
+  { label: "low", color: "#D98B6F", range: "<10%" },
+  { label: "normal", color: "#D4A85C", range: "10–30%" },
+  { label: "strong", color: "#7FB3A3", range: "30–100%" },
+  { label: "viral", color: "#EDE5D0", range: ">100%" },
+];
+const SAVE_RATE_TIERS_LEGEND = [
+  { label: "poor", color: "#D98B6F", range: "<0.5%" },
+  { label: "avg", color: "#D4A85C", range: "0.5–1%" },
+  { label: "good", color: "#7FB3A3", range: "1–2%" },
+  { label: "excellent", color: "#EDE5D0", range: ">2%" },
+];
+const SHARE_RATE_TIERS_LEGEND = [
+  { label: "avg", color: "#D4A85C", range: "<0.5%" },
+  { label: "good", color: "#7FB3A3", range: "0.5–1.5%" },
+  { label: "excellent", color: "#EDE5D0", range: ">1.5%" },
+];
+
+const CONTENT_MIX_COPY = {
+  section:
+    "come performano i diversi tipi di contenuto rispetto all'atteso su questo account",
+  legend:
+    "Benchmark = reach attesa del formato su questo account. 0% = in linea, valori positivi = sopra atteso. Reach/giorno = reach medio al giorno nei primi 7 giorni osservati.",
+  avgReach:
+    "Media del reach dei post di questo formato. Formula: reach totale diviso numero di post.",
+  avgEr:
+    "Engagement rate del formato. Formula: interazioni totali diviso reach totale x 100. Interazioni = like + commenti + salvataggi + condivisioni.",
+  avgVelocity:
+    "Velocita di distribuzione. Per ogni post: reach osservato diviso giorni osservati, fino a 7 giorni. Qui vedi la media del formato, espressa come reach al giorno.",
+  avgBenchmark:
+    "Scarto rispetto alla reach attesa per questo formato sul tuo account. 0% = in linea, +20% = sopra atteso, -20% = sotto atteso. L'atteso parte dalla reach media account corretta per tipo di contenuto.",
+};
+
 // Extract a metric value from the embedded insights array on a post
-const metricOf = (post, name) =>
-  post.insights?.data?.find((x) => x.name === name)?.values?.[0]?.value ?? 0;
-
-// Interactions sum for a single post (likes + comments + saved + shares)
-const postInteractions = (p) =>
-  (p.like_count || 0) +
-  (p.comments_count || 0) +
-  metricOf(p, "saved") +
-  metricOf(p, "shares");
-
 // ─── Main Component ───────────────────────────────────────────────────────
 export default function App() {
   const [account, setAccount] = useState(null);
@@ -456,29 +505,58 @@ export default function App() {
 
   const postsOutsideRange = posts.length - postsInRange.length;
 
+  const postAnalyticsById = useMemo(() => {
+    if (staticData?.postAnalytics) return staticData.postAnalytics;
+    return derivePostAnalytics(posts, postHistory, account);
+  }, [staticData, posts, postHistory, account]);
+
   const enrichedPosts = useMemo(() => {
     return postsInRange.map((p) => {
-      const reach = metricOf(p, "reach");
-      const saved = metricOf(p, "saved");
-      const shares = metricOf(p, "shares");
-      const views = metricOf(p, "views");
-      const interactions = postInteractions(p);
-      const er = reach > 0 ? (interactions / reach) * 100 : 0;
-      return { ...p, reach, saved, shares, views, interactions, er };
+      const analytics = postAnalyticsById?.[p.id] || {};
+      return {
+        ...p,
+        reach: analytics.reach ?? metricOf(p, "reach"),
+        saved: analytics.saved ?? metricOf(p, "saved"),
+        shares: analytics.shares ?? metricOf(p, "shares"),
+        views: analytics.views ?? metricOf(p, "views"),
+        interactions: analytics.interactions ?? postInteractions(p),
+        er: analytics.er ?? 0,
+        velocity7d: analytics.velocity7d ?? null,
+        saveVelocity7d: analytics.saveVelocity7d ?? null,
+        benchmarkRatio: analytics.benchmarkRatio ?? null,
+        benchmarkDeltaPct: analytics.benchmarkDeltaPct ?? null,
+        lifecycleSeries: analytics.lifecycleSeries || [],
+        curveType: analytics.curveType || "forming",
+        observedDays: analytics.observedDays ?? 1,
+      };
     });
-  }, [postsInRange]);
+  }, [postsInRange, postAnalyticsById]);
+
+  const scatterMeta = useMemo(
+    () => deriveScatterMeta(enrichedPosts),
+    [enrichedPosts]
+  );
+
+  const analyzedPosts = useMemo(() => {
+    return enrichedPosts.map((post) => ({
+      ...post,
+      quadrant: scatterMeta.byId?.[post.id]?.quadrant || "weak",
+      outlierFlag: scatterMeta.byId?.[post.id]?.outlierFlag || false,
+    }));
+  }, [enrichedPosts, scatterMeta]);
 
   const sortedPosts = useMemo(() => {
-    const arr = [...enrichedPosts];
+    const arr = [...analyzedPosts];
     const cmp = {
       reach: (a, b) => b.reach - a.reach,
       er: (a, b) => b.er - a.er,
       saved: (a, b) => b.saved - a.saved,
       shares: (a, b) => b.shares - a.shares,
+      velocity: (a, b) => (b.velocity7d || 0) - (a.velocity7d || 0),
     }[sortMode];
     arr.sort(cmp);
     return arr;
-  }, [enrichedPosts, sortMode]);
+  }, [analyzedPosts, sortMode]);
 
   const scatterByType = useMemo(() => {
     const byType = {
@@ -487,7 +565,7 @@ export default function App() {
       IMAGE: [],
       CAROUSEL_ALBUM: [],
     };
-    enrichedPosts.forEach((p) => {
+    analyzedPosts.forEach((p) => {
       const type = byType[p.media_type] ? p.media_type : "IMAGE";
       byType[type].push({
         x: p.reach,
@@ -498,29 +576,32 @@ export default function App() {
         permalink: p.permalink,
         thumb: p.thumbnail_url || p.media_url,
         date: p.timestamp,
+        velocity7d: p.velocity7d,
+        benchmarkDeltaPct: p.benchmarkDeltaPct,
+        quadrant: p.quadrant,
+        outlierFlag: p.outlierFlag,
       });
     });
     return byType;
-  }, [enrichedPosts]);
+  }, [analyzedPosts]);
 
-  const contentMix = useMemo(() => {
-    const mix = {};
-    Object.keys(MEDIA_TYPE_LABELS).forEach((t) => {
-      mix[t] = { count: 0, reachSum: 0, interSum: 0 };
-    });
-    enrichedPosts.forEach((p) => {
-      const bucket = mix[p.media_type] ? p.media_type : "IMAGE";
-      mix[bucket].count += 1;
-      mix[bucket].reachSum += p.reach;
-      mix[bucket].interSum += p.interactions;
-    });
-    return Object.entries(mix).map(([type, v]) => ({
-      type,
-      count: v.count,
-      avgReach: v.count ? v.reachSum / v.count : 0,
-      avgEr: v.reachSum ? (v.interSum / v.reachSum) * 100 : 0,
-    }));
-  }, [enrichedPosts]);
+  const scatterOutliers = useMemo(
+    () =>
+      analyzedPosts
+        .filter((post) => post.outlierFlag)
+        .map((post) => ({
+          x: post.reach,
+          y: post.er,
+          z: post.interactions,
+          id: post.id,
+        })),
+    [analyzedPosts]
+  );
+
+  const contentMix = useMemo(
+    () => deriveContentMix(analyzedPosts),
+    [analyzedPosts]
+  );
 
   const heatmap = useMemo(() => {
     const grid = Array(7)
@@ -530,7 +611,7 @@ export default function App() {
           .fill(null)
           .map(() => ({ count: 0, reachSum: 0 }))
       );
-    enrichedPosts.forEach((p) => {
+    analyzedPosts.forEach((p) => {
       const d = new Date(p.timestamp);
       const dow = (d.getDay() + 6) % 7; // Mon=0, Sun=6
       const bucket = Math.floor(d.getHours() / 4);
@@ -545,29 +626,25 @@ export default function App() {
         if (avg > maxAvg) maxAvg = avg;
       }
     }
-    return { grid, maxAvg, total: enrichedPosts.length };
-  }, [enrichedPosts]);
+    return { grid, maxAvg, total: analyzedPosts.length };
+  }, [analyzedPosts]);
 
   // Nuove metriche aggregate periodo: save rate, share rate, views totali.
   // Calcolate sui post visibili (feed fetched), quindi "indicative del periodo"
   // ma non garantite allineate con total_interactions di daily_snapshot.
   const postMetricsAgg = useMemo(() => {
-    if (!postsInRange.length) return null;
+    if (!analyzedPosts.length) return null;
     let reachSum = 0;
     let savedSum = 0;
     let sharesSum = 0;
     let viewsSum = 0;
     let videoCount = 0;
-    for (const p of postsInRange) {
-      const reach = metricOf(p, "reach");
-      const saved = metricOf(p, "saved");
-      const shares = metricOf(p, "shares");
-      const views = metricOf(p, "views");
-      reachSum += reach;
-      savedSum += saved;
-      sharesSum += shares;
+    for (const p of analyzedPosts) {
+      reachSum += p.reach;
+      savedSum += p.saved;
+      sharesSum += p.shares;
       if (p.media_type === "VIDEO" || p.media_type === "REELS") {
-        viewsSum += views;
+        viewsSum += p.views;
         videoCount += 1;
       }
     }
@@ -577,7 +654,7 @@ export default function App() {
       viewsTotal: viewsSum,
       videoCount,
     };
-  }, [postsInRange]);
+  }, [analyzedPosts]);
 
   // Reach rate = reach del periodo / followers × 100
   const reachRate = useMemo(() => {
@@ -977,8 +1054,20 @@ export default function App() {
                       <span className="italic">content</span> mix
                     </h2>
                     <p className="text-xs text-white/40 mono-font mt-1">
-                      come performano i diversi tipi di contenuto
+                      {CONTENT_MIX_COPY.section}
                     </p>
+                    <div className="mt-3 flex flex-wrap gap-2 text-[10px] mono-font text-white/55">
+                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">
+                        benchmark = reach attesa del formato
+                      </span>
+                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">
+                        0% = in linea
+                      </span>
+                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">
+                        reach/giorno = reach medio al giorno
+                      </span>
+                      <InfoTip text={CONTENT_MIX_COPY.legend} side="bottom" />
+                    </div>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
@@ -1051,13 +1140,14 @@ export default function App() {
                       <span className="italic">post</span> analysis
                     </h2>
                     <p className="text-xs text-white/40 mono-font mt-1">
-                      reach × engagement rate · colore per tipo
+                      reach × engagement rate · quadranti mediani + outlier highlight
                     </p>
                   </div>
                   <div className="glass rounded-full px-2 py-1 flex items-center gap-1">
                     {[
                       { k: "reach", label: "Reach" },
                       { k: "er", label: "Engagement" },
+                      { k: "velocity", label: "Reach/g" },
                       { k: "saved", label: "Salvati" },
                       { k: "shares", label: "Shares" },
                     ].map(({ k, label }) => (
@@ -1100,6 +1190,16 @@ export default function App() {
                         tickFormatter={(v) => v.toFixed(0) + "%"}
                       />
                       <ZAxis type="number" dataKey="z" range={[40, 220]} />
+                      <ReferenceLine
+                        x={scatterMeta.reachMedian}
+                        stroke="rgba(237,229,208,0.25)"
+                        strokeDasharray="4 4"
+                      />
+                      <ReferenceLine
+                        y={scatterMeta.erMedian}
+                        stroke="rgba(127,179,163,0.25)"
+                        strokeDasharray="4 4"
+                      />
                       <Tooltip content={<ScatterTooltip />} cursor={{ strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.2)" }} />
                       {Object.entries(scatterByType).map(([type, data]) =>
                         data.length > 0 ? (
@@ -1113,6 +1213,15 @@ export default function App() {
                             strokeWidth={1}
                           />
                         ) : null
+                      )}
+                      {scatterOutliers.length > 0 && (
+                        <Scatter
+                          name="Outlier"
+                          data={scatterOutliers}
+                          fill="transparent"
+                          stroke="#EDE5D0"
+                          strokeWidth={2}
+                        />
                       )}
                     </ScatterChart>
                   </ResponsiveContainer>
@@ -1128,6 +1237,27 @@ export default function App() {
                         </div>
                       ) : null
                     )}
+                    {scatterOutliers.length > 0 && (
+                      <div className="flex items-center gap-2 text-[#EDE5D0]">
+                        <span className="w-2.5 h-2.5 rounded-full border border-[#EDE5D0]" />
+                        outlier
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2 mt-4">
+                    {scatterMeta.quadrants.map((quadrant) => (
+                      <span
+                        key={quadrant.key}
+                        className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[10px] mono-font uppercase tracking-wider"
+                        style={{
+                          backgroundColor: `${quadrant.color}12`,
+                          color: quadrant.color,
+                        }}
+                      >
+                        <span>{quadrant.label}</span>
+                        <span className="text-white/40">{quadrant.count}</span>
+                      </span>
+                    ))}
                   </div>
                 </div>
 
@@ -1137,7 +1267,6 @@ export default function App() {
                       key={p.id}
                       post={p}
                       rank={i + 1}
-                      history={postHistory[p.id]}
                     />
                   ))}
                 </div>
@@ -1721,17 +1850,40 @@ function SummaryRow({ icon, label, value, deltaPct, info, tier }) {
   );
 }
 
+function ContentMixStat({ label, info, value }) {
+  return (
+    <div>
+      <div className="flex items-center gap-1 text-white/50 uppercase text-[9px] tracking-wider">
+        <span>{label}</span>
+        <InfoTip text={info} side="top" />
+      </div>
+      <div className="text-white font-semibold">{value}</div>
+    </div>
+  );
+}
+
 function ContentTypeTile({ data }) {
+  const bench = benchmarkTier(data.avgBenchmarkRatio);
   return (
     <div className="glass rounded-2xl p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <span
-          className="w-2.5 h-2.5 rounded-full"
-          style={{ backgroundColor: MEDIA_TYPE_COLORS[data.type] }}
-        />
-        <span className="text-xs mono-font uppercase tracking-wider text-white/70">
-          {MEDIA_TYPE_LABELS[data.type]}
-        </span>
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <div className="flex items-center gap-2">
+          <span
+            className="w-2.5 h-2.5 rounded-full"
+            style={{ backgroundColor: MEDIA_TYPE_COLORS[data.type] }}
+          />
+          <span className="text-xs mono-font uppercase tracking-wider text-white/70">
+            {MEDIA_TYPE_LABELS[data.type]}
+          </span>
+        </div>
+        {bench && (
+          <span
+            className="inline-flex items-center rounded-full px-2 py-0.5 text-[9px] mono-font uppercase tracking-wider"
+            style={{ backgroundColor: `${bench.color}15`, color: bench.color }}
+          >
+            {bench.label}
+          </span>
+        )}
       </div>
       <div className="display-font text-3xl text-white font-light mb-1">
         {data.count}
@@ -1741,20 +1893,40 @@ function ContentTypeTile({ data }) {
       </div>
       {data.count > 0 && (
         <div className="mt-3 pt-3 border-t border-white/5 grid grid-cols-2 gap-2 text-[11px] mono-font">
-          <div>
-            <div className="text-white/50 uppercase text-[9px] tracking-wider">
-              Reach avg
-            </div>
-            <div className="text-white font-semibold">{fmt(data.avgReach)}</div>
-          </div>
-          <div>
-            <div className="text-white/50 uppercase text-[9px] tracking-wider">
-              ER avg
-            </div>
-            <div className="text-white font-semibold">
-              {data.avgEr.toFixed(1)}%
-            </div>
-          </div>
+          <ContentMixStat
+            label="Reach medio"
+            info={CONTENT_MIX_COPY.avgReach}
+            value={fmt(data.avgReach)}
+          />
+          <ContentMixStat
+            label="ER medio"
+            info={CONTENT_MIX_COPY.avgEr}
+            value={`${data.avgEr.toFixed(1)}%`}
+          />
+          <ContentMixStat
+            label="Reach/giorno"
+            info={CONTENT_MIX_COPY.avgVelocity}
+            value={fmt(data.avgVelocity)}
+          />
+          <ContentMixStat
+            label="Vs atteso"
+            info={CONTENT_MIX_COPY.avgBenchmark}
+            value={fmtSignedPct(
+              data.avgBenchmarkRatio != null
+                ? (data.avgBenchmarkRatio - 1) * 100
+                : null
+            )}
+          />
+        </div>
+      )}
+      {data.outlierCount > 0 && (
+        <div className="mt-3 pt-3 border-t border-white/5 flex items-center justify-between text-[10px] mono-font">
+          <span className="text-white/40 uppercase tracking-wider">
+            outlier
+          </span>
+          <span className="text-[#EDE5D0] font-semibold">
+            {data.outlierCount}
+          </span>
         </div>
       )}
     </div>
@@ -1785,10 +1957,50 @@ function Sparkline({ data, height = 28 }) {
   );
 }
 
-function PostCard({ post, rank, history }) {
+function LifecycleMiniChart({ data }) {
+  if (!data || data.length < 2) return null;
+  return (
+    <div>
+      <ResponsiveContainer width="100%" height={70}>
+        <LineChart data={data} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+          <Line
+            type="monotone"
+            dataKey="reachPct"
+            stroke="#EDE5D0"
+            strokeWidth={1.8}
+            dot={false}
+            isAnimationActive={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="savedPct"
+            stroke="#7FB3A3"
+            strokeWidth={1.6}
+            dot={false}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+      <div className="mt-1 flex items-center gap-3 text-[9px] mono-font uppercase tracking-wider text-white/35">
+        <span className="inline-flex items-center gap-1">
+          <span className="w-2 h-[2px] rounded-full bg-[#EDE5D0]" />
+          reach
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="w-2 h-[2px] rounded-full bg-[#7FB3A3]" />
+          saved
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function PostCard({ post, rank }) {
   const thumb = post.thumbnail_url || post.media_url;
   const caption = (post.caption || "").slice(0, 80);
   const isVideo = post.media_type === "VIDEO" || post.media_type === "REELS";
+  const bench = benchmarkTier(post.benchmarkRatio);
+  const curveMeta = CURVE_TYPE_META[post.curveType] || CURVE_TYPE_META.forming;
   return (
     <a
       href={post.permalink}
@@ -1812,6 +2024,11 @@ function PostCard({ post, rank, history }) {
         <div className="absolute top-3 left-3 glass rounded-full px-3 py-1 text-xs mono-font text-white">
           #{rank}
         </div>
+        {post.outlierFlag && (
+          <div className="absolute top-12 left-3 rounded-full border border-[#EDE5D0]/40 bg-black/35 px-2 py-0.5 text-[9px] mono-font uppercase tracking-wider text-[#EDE5D0]">
+            outlier
+          </div>
+        )}
         {isVideo && (
           <div className="absolute top-3 right-3 glass rounded-full p-2">
             <Film size={14} className="text-white" />
@@ -1839,6 +2056,28 @@ function PostCard({ post, rank, history }) {
             {post.caption?.length > 80 && "…"}
           </p>
         )}
+        <div className="flex flex-wrap gap-2 mb-3">
+          <span className="rounded-full px-2 py-0.5 text-[10px] mono-font bg-white/5 text-white/75">
+            {fmt(post.velocity7d)}/g
+          </span>
+          {bench && (
+            <span
+              className="rounded-full px-2 py-0.5 text-[10px] mono-font"
+              style={{ backgroundColor: `${bench.color}15`, color: bench.color }}
+            >
+              {fmtSignedPct(post.benchmarkDeltaPct)} vs atteso
+            </span>
+          )}
+          <span
+            className="rounded-full px-2 py-0.5 text-[10px] mono-font"
+            style={{
+              backgroundColor: `${curveMeta.color}15`,
+              color: curveMeta.color,
+            }}
+          >
+            {curveMeta.label}
+          </span>
+        </div>
         <div className="grid grid-cols-4 gap-2 text-center pt-3 border-t border-white/5">
           <Metric
             icon={<TrendingUp size={11} />}
@@ -1861,12 +2100,17 @@ function PostCard({ post, rank, history }) {
             label="shares"
           />
         </div>
-        {history && history.length >= 2 && (
+        {post.lifecycleSeries && post.lifecycleSeries.length >= 2 && (
           <div className="mt-3 pt-3 border-t border-white/5">
-            <div className="text-[9px] text-white/30 mono-font uppercase tracking-wider mb-1">
-              curva reach · {history.length} punti
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <div className="text-[9px] text-white/30 mono-font uppercase tracking-wider">
+                timeline 7g
+              </div>
+              <div className="text-[9px] text-white/40 mono-font uppercase tracking-wider">
+                {post.observedDays}/7g osservati
+              </div>
             </div>
-            <Sparkline data={history} />
+            <LifecycleMiniChart data={post.lifecycleSeries} />
           </div>
         )}
       </div>
@@ -1987,6 +2231,25 @@ function ScatterTooltip({ active, payload }) {
           <span className="text-white font-semibold ml-1">
             {d.y.toFixed(1)}%
           </span>
+        </div>
+        <div>
+          <span className="text-white/50">reach/g</span>
+          <span className="text-white font-semibold ml-1">
+            {fmt(d.velocity7d)}/g
+          </span>
+        </div>
+        <div>
+          <span className="text-white/50">vs atteso</span>
+          <span className="text-white font-semibold ml-1">
+            {fmtSignedPct(d.benchmarkDeltaPct)}
+          </span>
+        </div>
+        <div className="col-span-2">
+          <span className="text-white/50">quadrant</span>
+          <span className="text-white font-semibold ml-1">{d.quadrant}</span>
+          {d.outlierFlag && (
+            <span className="ml-2 text-[#EDE5D0] uppercase">outlier</span>
+          )}
         </div>
       </div>
     </div>

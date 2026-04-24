@@ -12,6 +12,36 @@ Tipi di kind:
 
 ---
 
+## [2026-04-24] feat | Milestone 1 analytics: velocity, benchmark ratio, scatter quadrants, lifecycle cards
+
+- Creato [ig-dashboard/src/analytics.js](../ig-dashboard/src/analytics.js) come modulo shared per:
+  - benchmark per `media_type`
+  - `derivePostAnalytics()` con `velocity7d`, `benchmarkRatio`, `benchmarkDeltaPct`, `lifecycleSeries`, `curveType`
+  - `deriveScatterMeta()` con mediane reach/ER, quadranti e flag outlier
+  - `deriveContentMix()` con velocity media e rapporto medio vs benchmark
+- [scripts/export-json.js](../ig-dashboard/scripts/export-json.js) ora scrive anche `postAnalytics` nel payload statico. Obiettivo: spostare i derivati costosi fuori dal render e lasciare il client piu' leggero
+- [src/App.jsx](../ig-dashboard/src/App.jsx) aggiornato per usare i derivati shared:
+  - content mix con velocity media, delta vs benchmark e conteggio outlier per formato
+  - scatter reach vs ER con `ReferenceLine` sulle mediane e ring highlight sugli outlier
+  - sort mode `velocity`
+  - post card con badge velocity / benchmark / curve type e mini timeline 7g `reach` + `saved`
+- [src/fakeData.js](../ig-dashboard/src/fakeData.js) arricchito con curve diverse (`front_loaded`, `steady`, `slow_burn`) e boost occasionali per simulare outlier reali anche in demo mode
+- Verifica:
+  - `npm.cmd run build` OK (richiesta esecuzione fuori sandbox per limite `spawn EPERM` di esbuild in sandbox)
+  - smoke test Node sui helper analytics + fake data OK (`posts=18`, `outliers=1`, `sampleCurve=front_loaded`)
+- Guardrail rimasto fermo: niente clustering in questa iterazione; niente ECharts finche' Recharts regge senza workaround brutti
+
+## [2026-04-24] note | Roadmap analytics vNext: 3 milestone + guardrail metodologici
+
+- Formalizzata in `TODO.md` una roadmap a 3 milestone per l'evoluzione analytics del dashboard:
+  1. **Performance & format signal** — `velocity`, benchmark di nicchia, scatter reach vs ER con quadranti/outlier, timeline 7 giorni per post
+  2. **Temporal intelligence** — calendar heatmap con overlay engagement e lettura pattern settimanali/stagionali
+  3. **Audience loyalty proxy** — coorti follower settimanali e stickiness proxy
+- Guardrail deciso: **niente k-means su `media_type` puro**. Il clustering ha senso solo su feature numeriche standardizzate (`reach`, `ER`, `save/share rate`, `velocity`, publish hour); `media_type` resta overlay interpretativo
+- Guardrail deciso: **niente claim di retention follower "vera"** con i dati attuali. Lo storage ha `daily_snapshot` e `audience_snapshot`, ma non eventi follower-level. Possiamo stimare crescita netta/coorti proxy, non retention persona-per-persona
+- Scelta tecnica: mantenere **Recharts** per KPI e chart semplici; introdurre **Apache ECharts** solo dove serve davvero (scatter avanzato, calendar heatmap, annotazioni/outlier). Observable Plot resta opzione secondaria per viste analitiche/report
+- Obiettivo di prodotto: spostare il dashboard da reporting descrittivo a strumento decisionale senza rompere la leggibilità attuale né gonfiare troppo `App.jsx`
+
 ## [2026-04-24] feat | Refactor IA: 3 tab (Overview/Posts/Audience) + fix date filter consistency + fallback 90d
 
 **Phase 1 — Tab structure** (ADR 007 da scrivere)

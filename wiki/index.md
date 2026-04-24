@@ -25,6 +25,7 @@ Artefatto persistente e compondente di conoscenza sul progetto. Pattern Karpathy
 - [decisions/003-static-deploy.md](decisions/003-static-deploy.md) — GH Pages pre-renderato vs proxy backend
 - [decisions/004-skill-based-briefing.md](decisions/004-skill-based-briefing.md) — Skill `.claude/skills/pulp-briefing` come source-of-truth
 - [decisions/005-graph-api-vs-instagram-login.md](decisions/005-graph-api-vs-instagram-login.md) — FB Graph API, non Instagram Login
+- [decisions/006-chat-agent.md](decisions/006-chat-agent.md) — Chat agent dev-only via Vite middleware, function calling su Turso
 
 ### Concetti
 - [concepts/engagement-rate.md](concepts/engagement-rate.md) — Formula, tier, pitfall

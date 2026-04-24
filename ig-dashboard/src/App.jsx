@@ -37,6 +37,12 @@ import {
 } from "lucide-react";
 import { TOKEN, PAGE_ID, API } from "./config.js";
 import { generateFakeData, isFakeToken } from "./fakeData.js";
+import Chat from "./Chat.jsx";
+
+// Chat agent solo in dev (dipende dal middleware /api/chat che non esiste
+// nel build statico). Se vuoi forzare off in dev metti VITE_CHAT_DISABLED=true.
+const CHAT_ENABLED =
+  import.meta.env.DEV && import.meta.env.VITE_CHAT_DISABLED !== "true";
 
 // Static mode: il build è stato generato dal workflow publish-dashboard (GH Pages).
 // I dati vengono da /data.json pre-generato invece che chiamare Graph API.
@@ -1058,6 +1064,16 @@ export default function App() {
           </>
         )}
       </div>
+      {CHAT_ENABLED && (
+        <Chat
+          account={account}
+          insights={insights}
+          insightsPrev={insightsPrev}
+          posts={posts}
+          audience={audience}
+          dateRange={dateRange}
+        />
+      )}
     </div>
   );
 }

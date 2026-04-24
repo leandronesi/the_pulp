@@ -12,6 +12,7 @@ Lista viva. Aggiornata ad ogni sessione. Quello che è `[x]` non serve più disc
 
 ## ✅ Done (recente → vecchio)
 
+- [x] **Chat agent "Chiedi al Pulp"** dev-only con function calling su Turso — [wiki/decisions/006-chat-agent.md](wiki/decisions/006-chat-agent.md)
 - [x] Debiti tecnici: unify fetch in `scripts/ig-fetch.js`, audience da Turso, cleanup locale — [wiki/log.md](wiki/log.md) 2026-04-24
 - [x] `scripts/briefing.js` v0.2 con LLM narrative (OpenAI gpt-5.4-mini) — [reports/briefing-2026-04-24-7d.md](reports/briefing-2026-04-24-7d.md)
 - [x] Tooltip contestuali (InfoTip) su KPI/pill/sintesi — [wiki/log.md](wiki/log.md) 2026-04-24
@@ -71,6 +72,12 @@ Lista viva. Aggiornata ad ogni sessione. Quello che è `[x]` non serve più disc
 - [ ] Page sul dashboard (o sezione separata) che mostra `run_log` — ultimi successi/fallimenti dei cron. "Hai avuto il tuo ultimo snapshot fresh alle 16:05 · status ok"
 
 ---
+
+### Chat agent — Phase 2 (differito)
+- [ ] Deploy chat endpoint su Cloudflare Worker con secrets `OPENAI_API_KEY` + `TURSO_*`
+- [ ] `VITE_CHAT_ENDPOINT` in build pubblico punta al Worker → chat visibile anche su GH Pages
+- [ ] Rate limiting lato Worker (evitare abusi)
+- [ ] Forse auth minimale (basic password o IP whitelist) per la versione pubblica
 
 ## 🔮 Blue sky (non prima di aver consolidato sopra)
 

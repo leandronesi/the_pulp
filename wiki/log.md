@@ -12,6 +12,15 @@ Tipi di kind:
 
 ---
 
+## [2026-04-24] feat | Chat agent dev-only ("Chiedi al Pulp")
+- ADR [006-chat-agent](decisions/006-chat-agent.md) — C3 (spiegatore + analista con query) via Vite middleware, Phase 1 solo in dev, Phase 2 futuro per Cloudflare Worker
+- **Backend**: [scripts/chat-plugin.js](../ig-dashboard/scripts/chat-plugin.js), plugin Vite con `apply:"serve"`. Registra `POST /api/chat` e `GET /api/chat-status`. System prompt da brand-context + benchmarks + schema + concetti wiki + dashboard state. Tool calling OpenAI con `queryTurso(sql)` — guard SELECT-only, reject keyword mutanti, enforce LIMIT, timeout implicito libsql
+- **Frontend**: [src/Chat.jsx](../ig-dashboard/src/Chat.jsx), pulsante flottante + drawer laterale, glass coerente, history in localStorage. Tool call rendering: SQL in `<pre>` + tabella risultati max 10 righe
+- **Gating**: montato solo se `import.meta.env.DEV` → tree-shake completo dal bundle statico pubblico (verificato `grep "chiedi al pulp" dist/assets/*.js` = 0)
+- **Override**: `VITE_CHAT_DISABLED=true` per disabilitare anche in dev
+- **Test end-to-end**: domanda "qual è il post con più reach nel mio archivio?" → LLM genera SQL con GROUP BY + MAX(reach) + ORDER BY + LIMIT, query in 875ms su Turso, risposta editoriale corretta ("video del 20 marzo 2026 con 3113 reach, caption assente")
+- Token per turno con tool call: ~16k (system prompt pesante). Costo gpt-5.4-mini = centesimi/giorno anche con uso intensivo
+
 ## [2026-04-24] refactor | Debiti tecnici: unify fetch + audience da Turso + pulizia
 - **Nuovo modulo** [scripts/ig-fetch.js](../ig-dashboard/scripts/ig-fetch.js) con tutte le fetch verso Graph API: `createGql`, `resolveIgUserId`, `fetchProfile`, `fetchDayTotals`, `fetchReachDaily`, `fetchMedia`, `fetchAudience`, `loadCredentials`, `metricOf`, `rangeSinceUntil`.
 - `snapshot.js` e `export-json.js` rifattorizzati per importare da ig-fetch: ~150 righe di duplicazione eliminate. Drift tra i due script impossibile da ora: se Meta cambia un campo API, si tocca ig-fetch.js e basta.

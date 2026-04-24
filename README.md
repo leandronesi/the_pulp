@@ -23,15 +23,24 @@ La documentazione approfondita sta in [ig-dashboard/CLAUDE.md](ig-dashboard/CLAU
 
 ```bash
 cd ig-dashboard
+
+# 1. Config IG (Page access token)
 cp src/config.example.js src/config.js
-# modifica src/config.js e metti il tuo Page access token
+# modifica src/config.js → metti il tuo Page access token
+
+# 2. Storage (opzionale: Turso cloud, altrimenti fallback locale)
+cp .env.example .env
+# modifica .env → TURSO_DATABASE_URL + TURSO_AUTH_TOKEN
+# (se lasci .env vuoto, gli script scrivono su data/pulp.db in locale)
+
+# 3. Run
 npm install
-npm run init-db      # crea data/pulp.db
+npm run init-db      # applica schema
 npm run dev          # apre il dashboard su localhost:5180
-npm run snapshot     # cattura un punto storico in SQLite
+npm run snapshot     # cattura un punto storico in Turso/SQLite
 ```
 
-Con `TOKEN = ""` il dashboard gira in **demo mode** con dati fake — utile per iterare sulla UI senza token.
+Con `TOKEN = ""` in config.js il dashboard gira in **demo mode** con dati fake — utile per iterare sulla UI senza token.
 
 ## Stato
 
@@ -39,7 +48,8 @@ Con `TOKEN = ""` il dashboard gira in **demo mode** con dati fake — utile per 
 - ✅ Demo mode con dati generati deterministicamente
 - ✅ Archivio SQLite con schema (`daily_snapshot`, `post`, `post_snapshot`, `audience_snapshot`, `run_log`, `meta`)
 - ✅ Script `npm run snapshot` per popolare il DB
-- 🔜 Scheduling automatico (Task Scheduler locale o cloud)
+- ✅ Storage cloud su Turso (libsql), fallback locale se `.env` non configurato
+- 🔜 Scheduling automatico cloud (GitHub Actions o Cloudflare Worker)
 - 🔜 Briefing settimanale via Gmail MCP
 - 🔜 Post-mortem on-demand
 - 🔜 Editor piano editoriale basato su storico

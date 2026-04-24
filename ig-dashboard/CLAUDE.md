@@ -29,9 +29,10 @@ Non è solo un dashboard — è la **base di un data analyst / social media mana
 - **lucide-react** (icone)
 
 **Backend analytics (scripts Node):**
-- **better-sqlite3** — DB embedded, sync, single file in `data/pulp.db`
-- Script in `scripts/` invocabili via `npm run <nome>` o via scheduled agent
-- Nessun server HTTP per ora; il dashboard resta client-side, gli script girano separatamente
+- **@libsql/client** — client SQLite-compatibile che parla sia file locale che Turso remoto. Unified async API, zero differenze di codice tra i due mode.
+- Target DB controllato da env var: se `TURSO_DATABASE_URL` è set → cloud (Turso), altrimenti → `data/pulp.db` locale.
+- Script in `scripts/` invocabili via `npm run <nome>`. Caricano `.env` tramite `node --env-file-if-exists=.env`.
+- Nessun server HTTP per ora; il dashboard resta client-side, gli script girano separatamente.
 
 ## Architettura (90 secondi)
 
@@ -126,9 +127,15 @@ Differenze chiave rispetto al flow Instagram Login:
 - Identificatore: servono `PAGE_ID` + resolve runtime dell'`ig_user_id` (non `me`)
 - Permessi: `pages_*` + `instagram_basic` + `instagram_manage_insights` (non famiglia `instagram_business_*`)
 
-## Data layer (SQLite)
+## Data layer (SQLite/Turso)
 
-Archivio storico locale per costruire ciò che la Graph API non espone: serie temporali di follower, evoluzione reach/engagement dei singoli post nel tempo, demographics storiche. Il DB file vive in `data/pulp.db` (gitignorato — contiene dati IG).
+Archivio storico per costruire ciò che la Graph API non espone: serie temporali di follower, evoluzione reach/engagement dei singoli post nel tempo, demographics storiche.
+
+**Due target supportati tramite @libsql/client:**
+- **Turso (remoto)** — set `TURSO_DATABASE_URL` e `TURSO_AUTH_TOKEN` in `.env`. Produzione / always-on / accessibile da cron cloud.
+- **SQLite locale (fallback)** — se env non sono set, usa `data/pulp.db` (gitignorato). Utile per dev offline.
+
+Schema identico su entrambi — stesso SQL, stesse query. La scelta del target è trasparente al codice.
 
 **Tabelle** (schema autoritativo in [scripts/db.js](scripts/db.js)):
 
@@ -141,11 +148,13 @@ Archivio storico locale per costruire ciò che la Graph API non espone: serie te
 | `run_log` | 1 riga/esecuzione | auto | Telemetria: quando, che tipo di script, esito, errori. |
 | `meta` | KV | `key` | Valori cacheati: `ig_user_id`, eventuali altri config. |
 
-**Helpers in [scripts/db.js](scripts/db.js):**
-- `getDb()` — apre/crea DB, applica schema (idempotente)
+**Helpers in [scripts/db.js](scripts/db.js) (tutti async):**
+- `getDb()` — apre client libsql (Turso o file locale), applica schema (idempotente)
+- `getDbMode()` / `getDbTarget()` — "turso"/"local" + URL target, per logging
 - `todayIsoDate()` — data di oggi in timezone Europe/Rome
 - `startRunLog(kind)` / `endRunLog(id, {status, summary, error})` — tracciano le esecuzioni
 - `setMeta(key, value)` / `getMeta(key)` — KV store
+- `countTables()` — conteggi rapidi delle tabelle principali
 
 ## Script analytics
 
@@ -156,7 +165,7 @@ Invocabili via `npm run <nome>` dalla root di `ig-dashboard/`:
 | `npm run init-db` | [scripts/init-db.js](scripts/init-db.js) | Apre/crea `data/pulp.db`, applica schema, stampa conteggi per conferma. Idempotente. |
 | `npm run snapshot` | [scripts/snapshot.js](scripts/snapshot.js) | Fetch IG corrente → scrive `daily_snapshot`, `post` + `post_snapshot`, `audience_snapshot`. In fake mode esce subito senza toccare il DB. Pensato per cron giornaliero. |
 
-Ogni script è ESM, importa `src/config.js` direttamente (niente dotenv), e rispetta `isFakeToken(TOKEN)` per evitare di inquinare il DB con dati demo.
+Ogni script è ESM, importa `src/config.js` direttamente, carica `.env` tramite il flag `--env-file-if-exists` di Node 20+, e rispetta `isFakeToken(TOKEN)` per evitare di inquinare il DB con dati demo.
 
 ## File principali
 
@@ -165,10 +174,11 @@ Ogni script è ESM, importa `src/config.js` direttamente (niente dotenv), e risp
 - [src/fakeData.js](src/fakeData.js) — generatore demo (con `isFakeToken`)
 - [src/main.jsx](src/main.jsx) — bootstrap React
 - [src/index.css](src/index.css) — `@tailwind base/components/utilities`
-- [scripts/db.js](scripts/db.js) — DB layer condiviso
+- [scripts/db.js](scripts/db.js) — DB layer condiviso (libsql, target Turso o file)
 - [scripts/init-db.js](scripts/init-db.js) — init schema
 - [scripts/snapshot.js](scripts/snapshot.js) — daily snapshot
-- [data/pulp.db](data/pulp.db) — SQLite archivio (gitignorato)
+- [.env](.env) — credenziali Turso (gitignorato); template in [.env.example](.env.example)
+- [data/pulp.db](data/pulp.db) — SQLite fallback locale (gitignorato, usato solo se Turso non è configurato)
 - [public/logo-mark.jpeg](public/logo-mark.jpeg) / [public/logo-wordmark.jpeg](public/logo-wordmark.jpeg) — brand assets
 - [vite.config.js](vite.config.js) — porta 5180 + `open: true` + `strictPort`
 - [tailwind.config.js](tailwind.config.js) / [postcss.config.js](postcss.config.js) — setup Tailwind

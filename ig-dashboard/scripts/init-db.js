@@ -1,25 +1,18 @@
-// One-shot: apre il DB (crea data/pulp.db se manca) e applica lo schema.
-// getDb() è idempotente: rigirarlo è sicuro e non tocca i dati esistenti.
+// One-shot: apre il DB (Turso se TURSO_DATABASE_URL è settata, altrimenti
+// data/pulp.db) e applica lo schema. getDb() è idempotente.
+//
 // Uso: npm run init-db
 
-import { getDb, DB_PATH } from "./db.js";
+import { getDb, getDbMode, getDbTarget, countTables } from "./db.js";
 
-const db = getDb();
+await getDb(); // applica schema
+const mode = getDbMode();
+const target = getDbTarget();
 
-// Conta le righe delle tabelle principali per conferma visiva
-const tables = [
-  "daily_snapshot",
-  "post",
-  "post_snapshot",
-  "audience_snapshot",
-  "run_log",
-  "meta",
-];
-
-console.log(`DB pronto: ${DB_PATH}`);
+console.log(`DB pronto (${mode}): ${target}`);
 console.log("─".repeat(60));
-for (const t of tables) {
-  const { n } = db.prepare(`SELECT COUNT(*) AS n FROM ${t}`).get();
+const counts = await countTables();
+for (const [t, n] of Object.entries(counts)) {
   console.log(`  ${t.padEnd(24)} ${String(n).padStart(8)} righe`);
 }
 console.log("─".repeat(60));

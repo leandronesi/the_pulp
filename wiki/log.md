@@ -12,6 +12,13 @@ Tipi di kind:
 
 ---
 
+## [2026-04-24] refactor | Debiti tecnici: unify fetch + audience da Turso + pulizia
+- **Nuovo modulo** [scripts/ig-fetch.js](../ig-dashboard/scripts/ig-fetch.js) con tutte le fetch verso Graph API: `createGql`, `resolveIgUserId`, `fetchProfile`, `fetchDayTotals`, `fetchReachDaily`, `fetchMedia`, `fetchAudience`, `loadCredentials`, `metricOf`, `rangeSinceUntil`.
+- `snapshot.js` e `export-json.js` rifattorizzati per importare da ig-fetch: ~150 righe di duplicazione eliminate. Drift tra i due script impossibile da ora: se Meta cambia un campo API, si tocca ig-fetch.js e basta.
+- `export-json.js` ora legge audience **da Turso** se disponibile (fallback Graph API). Risparmio: 4 call Graph API per ogni export run (24 call/giorno × 4h cron = 96 call/giorno → circa 480 al mese).
+- Pulizia: rimosso `data/pulp.db` locale (post-migrazione Turso era fossile). Il fallback a file locale resta nel codice per dev offline ma il file file non è più presente.
+- `dist/` già gitignored, verificato.
+
 ## [2026-04-24] fix | InfoTip → React Portal (fix tooltip nascosti)
 - Bug: i tooltip erano clippati dai container con `overflow-hidden` (KpiCard, PostCard) e coperti dallo stacking context delle glass-card
 - Fix: InfoTip ora usa `createPortal` a `document.body`. Posizione calcolata da `getBoundingClientRect()` del trigger, `position:fixed` + `z-[9999]`

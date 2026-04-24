@@ -13,104 +13,25 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { createClient } from "@libsql/client";
 import { isFakeToken } from "../src/fakeData.js";
+import {
+  createGql,
+  loadCredentials,
+  resolveIgUserId,
+  fetchProfile,
+  fetchDayTotals,
+  fetchReachDaily,
+  fetchMedia,
+  fetchAudience as fetchAudienceFromGraph,
+} from "./ig-fetch.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = resolve(__dirname, "..", "public");
 const OUT_FILE = resolve(PUBLIC_DIR, "data.json");
 
-// Credenziali — env > config.js
-let defaultConfig = { TOKEN: "", PAGE_ID: "", API: "" };
-try {
-  defaultConfig = await import("../src/config.js");
-} catch {
-  /* no config.js, ci affidiamo alle env */
-}
-const TOKEN = process.env.IG_PAGE_TOKEN || defaultConfig.TOKEN || "";
-const PAGE_ID = process.env.IG_PAGE_ID || defaultConfig.PAGE_ID || "";
-const API =
-  process.env.IG_API ||
-  defaultConfig.API ||
-  "https://graph.facebook.com/v21.0";
+const { token: TOKEN, pageId: PAGE_ID } = await loadCredentials();
 
 const RANGES = [7, 30, 90];
 const DAY_SECONDS = 86400;
-
-async function gql(path) {
-  const sep = path.includes("?") ? "&" : "?";
-  const url = `${API}${path}${sep}access_token=${TOKEN}`;
-  const r = await fetch(url);
-  const j = await r.json();
-  if (j.error) {
-    const e = new Error(`${j.error.message} (code ${j.error.code})`);
-    e.fbError = j.error;
-    throw e;
-  }
-  return j;
-}
-
-async function resolveIgUserId() {
-  const res = await gql(`/${PAGE_ID}?fields=instagram_business_account`);
-  const id = res.instagram_business_account?.id;
-  if (!id) throw new Error("Nessun IG Business Account collegato alla Page");
-  return id;
-}
-
-async function fetchProfile(ig) {
-  return gql(
-    `/${ig}?fields=username,name,biography,profile_picture_url,followers_count,follows_count,media_count`
-  );
-}
-
-async function fetchTotals(ig, since, until) {
-  const metrics = [
-    "reach",
-    "profile_views",
-    "website_clicks",
-    "accounts_engaged",
-    "total_interactions",
-  ];
-  const out = {};
-  const warnings = [];
-  await Promise.all(
-    metrics.map(async (m) => {
-      try {
-        const j = await gql(
-          `/${ig}/insights?metric=${m}&metric_type=total_value&period=day&since=${since}&until=${until}`
-        );
-        out[m] = j.data?.[0]?.total_value?.value ?? null;
-      } catch (e) {
-        warnings.push(`${m}: ${e.message}`);
-        out[m] = null;
-      }
-    })
-  );
-  return { totals: out, warnings };
-}
-
-async function fetchReachDaily(ig, since, until) {
-  try {
-    const j = await gql(
-      `/${ig}/insights?metric=reach&period=day&since=${since}&until=${until}`
-    );
-    return j.data?.[0]?.values || [];
-  } catch {
-    return [];
-  }
-}
-
-async function fetchMedia(ig) {
-  const fields =
-    "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count,insights.metric(reach,saved,shares,views)";
-  try {
-    const j = await gql(`/${ig}/media?fields=${fields}&limit=30`);
-    return j.data || [];
-  } catch {
-    const fb = await gql(
-      `/${ig}/media?fields=id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count&limit=30`
-    );
-    return fb.data || [];
-  }
-}
 
 // Storico post + daily da Turso (facoltativo: se env assenti → ritorna vuoti,
 // il dashboard gestisce la mancanza con sparkline nascosti).
@@ -177,48 +98,69 @@ async function fetchHistoryFromTurso(postIds) {
   }
 }
 
-async function fetchAudience(ig) {
-  const breakdowns = ["age", "gender", "city", "country"];
-  const out = {};
-  await Promise.all(
-    breakdowns.map(async (b) => {
-      try {
-        const j = await gql(
-          `/${ig}/insights?metric=follower_demographics&breakdown=${b}&period=lifetime&metric_type=total_value`
-        );
-        const rows =
-          j.data?.[0]?.total_value?.breakdowns?.[0]?.results || [];
-        out[b] = rows
-          .map((r) => ({
-            key: r.dimension_values?.[0] ?? "—",
-            value: r.value ?? 0,
-          }))
-          .filter((r) => r.value > 0);
-      } catch {
-        /* silenzioso */
+// Audience: prima prova Turso (dato già fotografato dallo snapshot cron,
+// risparmiamo 4 call Graph API a ogni export). Se Turso non ha righe
+// recenti, fallback a Graph API diretta.
+async function fetchAudienceSmart(gql, ig) {
+  const url = process.env.TURSO_DATABASE_URL;
+  if (url) {
+    try {
+      const db = createClient({
+        url,
+        authToken: process.env.TURSO_AUTH_TOKEN,
+      });
+      const dateRes = await db.execute(
+        "SELECT MAX(date) AS d FROM audience_snapshot"
+      );
+      const date = dateRes.rows[0]?.d;
+      if (date) {
+        const res = await db.execute({
+          sql: `SELECT breakdown, key, value
+                FROM audience_snapshot
+                WHERE date = ?
+                ORDER BY breakdown, value DESC`,
+          args: [date],
+        });
+        if (res.rows.length > 0) {
+          const out = {};
+          for (const r of res.rows) {
+            if (!out[r.breakdown]) out[r.breakdown] = [];
+            out[r.breakdown].push({
+              key: r.key,
+              value: Number(r.value),
+            });
+          }
+          console.log(`Audience da Turso (snapshot del ${date})`);
+          return out;
+        }
       }
-    })
-  );
-  return Object.keys(out).length ? out : null;
+    } catch (e) {
+      console.warn(
+        `Turso audience fetch fallito: ${e.message} — fallback Graph API`
+      );
+    }
+  }
+  console.log("Audience da Graph API (live)");
+  return fetchAudienceFromGraph(gql, ig);
 }
 
-async function snapshotForRange(ig, days) {
+async function snapshotForRange(gql, ig, days) {
   const until = Math.floor(Date.now() / 1000);
   const since = until - days * DAY_SECONDS;
   const sincePrev = until - 2 * days * DAY_SECONDS;
   const untilPrev = since;
 
   const [cur, prev, reachDaily] = await Promise.all([
-    fetchTotals(ig, since, until),
-    fetchTotals(ig, sincePrev, untilPrev),
-    fetchReachDaily(ig, since, until),
+    fetchDayTotals(gql, ig, since, until),
+    fetchDayTotals(gql, ig, sincePrev, untilPrev),
+    fetchReachDaily(gql, ig, since, until),
   ]);
 
   return {
     totals: cur.totals,
     totalsPrev: prev.totals,
     reachDaily,
-    warnings: cur.warnings,
+    warnings: cur.errors,
   };
 }
 
@@ -235,19 +177,21 @@ async function main() {
   }
 
   mkdirSync(PUBLIC_DIR, { recursive: true });
-  const igUserId = await resolveIgUserId();
+  const gql = createGql({ token: TOKEN });
+  const igUserId = await resolveIgUserId(gql, PAGE_ID);
   console.log(`IG User ID: ${igUserId}`);
 
-  const [profile, posts, audience] = await Promise.all([
-    fetchProfile(igUserId),
-    fetchMedia(igUserId),
-    fetchAudience(igUserId),
+  const [profile, mediaResp, audience] = await Promise.all([
+    fetchProfile(gql, igUserId),
+    fetchMedia(gql, igUserId, 30),
+    fetchAudienceSmart(gql, igUserId),
   ]);
+  const posts = mediaResp.posts;
 
   const ranges = {};
   for (const d of RANGES) {
     console.log(`Range ${d}d…`);
-    ranges[d] = await snapshotForRange(igUserId, d);
+    ranges[d] = await snapshotForRange(gql, igUserId, d);
   }
 
   // Storico opzionale da Turso (post_snapshot + daily_snapshot)

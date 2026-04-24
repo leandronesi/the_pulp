@@ -25,118 +25,31 @@ import {
   setMeta,
   getMeta,
 } from "./db.js";
+import {
+  createGql,
+  loadCredentials,
+  resolveIgUserId as resolveIgUserIdRaw,
+  fetchProfile,
+  fetchDayTotals,
+  fetchMedia,
+  fetchAudience,
+  rangeSinceUntil,
+  metricOf,
+} from "./ig-fetch.js";
 
-// Carica config di default da src/config.js se presente; se manca (tipico su CI)
-// non importa, i valori arrivano dalle env.
-let defaultConfig = { TOKEN: "", PAGE_ID: "", API: "" };
-try {
-  defaultConfig = await import("../src/config.js");
-} catch {
-  /* src/config.js non esiste, ci affidiamo alle env */
-}
-
-const TOKEN = process.env.IG_PAGE_TOKEN || defaultConfig.TOKEN || "";
-const PAGE_ID = process.env.IG_PAGE_ID || defaultConfig.PAGE_ID || "";
-const API =
-  process.env.IG_API ||
-  defaultConfig.API ||
-  "https://graph.facebook.com/v21.0";
+const { token: TOKEN, pageId: PAGE_ID, api: API } = await loadCredentials();
 
 const FRESH_ONLY = process.argv.includes("--fresh-only");
 const FRESH_WINDOW_DAYS = 7;
-const DAY_SECONDS = 86400;
 
-async function gql(path) {
-  const sep = path.includes("?") ? "&" : "?";
-  const url = `${API}${path}${sep}access_token=${TOKEN}`;
-  const r = await fetch(url);
-  const j = await r.json();
-  if (j.error) {
-    const e = new Error(`${j.error.message} (code ${j.error.code})`);
-    e.fbError = j.error;
-    throw e;
-  }
-  return j;
-}
-
-async function resolveIgUserId() {
+// Wrapper che cachea ig_user_id in tabella meta (seconda run in poi, 1 call in meno).
+async function resolveIgUserId(gql) {
   const cached = await getMeta("ig_user_id");
   if (cached) return cached;
-  const res = await gql(`/${PAGE_ID}?fields=instagram_business_account`);
-  const id = res.instagram_business_account?.id;
-  if (!id) throw new Error("Nessun IG Business Account collegato alla Page");
+  const id = await resolveIgUserIdRaw(gql, PAGE_ID);
   await setMeta("ig_user_id", id);
   return id;
 }
-
-async function fetchProfile(ig) {
-  const fields =
-    "username,name,biography,followers_count,follows_count,media_count";
-  return gql(`/${ig}?fields=${fields}`);
-}
-
-async function fetchDayTotals(ig) {
-  const until = Math.floor(Date.now() / 1000);
-  const since = until - DAY_SECONDS;
-  const metrics = [
-    "reach",
-    "profile_views",
-    "website_clicks",
-    "accounts_engaged",
-    "total_interactions",
-  ];
-  const out = {};
-  const errors = [];
-  await Promise.all(
-    metrics.map(async (m) => {
-      try {
-        const j = await gql(
-          `/${ig}/insights?metric=${m}&metric_type=total_value&period=day&since=${since}&until=${until}`
-        );
-        out[m] = j.data?.[0]?.total_value?.value ?? 0;
-      } catch (e) {
-        errors.push(`${m}: ${e.message}`);
-        out[m] = null;
-      }
-    })
-  );
-  return { totals: out, errors };
-}
-
-async function fetchRecentPosts(ig) {
-  const fields =
-    "id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count,insights.metric(reach,saved,shares,views)";
-  const j = await gql(`/${ig}/media?fields=${fields}&limit=30`);
-  return j.data || [];
-}
-
-async function fetchAudience(ig) {
-  const breakdowns = ["age", "gender", "city", "country"];
-  const out = {};
-  await Promise.all(
-    breakdowns.map(async (b) => {
-      try {
-        const j = await gql(
-          `/${ig}/insights?metric=follower_demographics&breakdown=${b}&period=lifetime&metric_type=total_value`
-        );
-        const rows =
-          j.data?.[0]?.total_value?.breakdowns?.[0]?.results || [];
-        out[b] = rows
-          .map((r) => ({
-            key: r.dimension_values?.[0] ?? "—",
-            value: r.value ?? 0,
-          }))
-          .filter((r) => r.value > 0);
-      } catch {
-        /* silenzioso: spesso bloccato sotto 100 follower engaged */
-      }
-    })
-  );
-  return out;
-}
-
-const metricOf = (post, name) =>
-  post.insights?.data?.find((x) => x.name === name)?.values?.[0]?.value ?? 0;
 
 // Scrive post + post_snapshot in una transazione batch. In fresh mode filtra
 // i post alla finestra di FRESH_WINDOW_DAYS (evita di snapshottare post morti).
@@ -221,12 +134,13 @@ async function main() {
   let fbErrors = [];
 
   try {
-    const igUserId = await resolveIgUserId();
+    const gql = createGql({ token: TOKEN, api: API });
+    const igUserId = await resolveIgUserId(gql);
     console.log(`IG User ID: ${igUserId}`);
 
     if (FRESH_ONLY) {
       // ── Fresh mode: solo i post recenti, nient'altro ────────────
-      const posts = await fetchRecentPosts(igUserId);
+      const { posts } = await fetchMedia(gql, igUserId, 30);
       const written = await writePosts(db, posts, fetchedAt, {
         freshOnly: true,
       });
@@ -248,15 +162,20 @@ async function main() {
     }
 
     // ── Full mode: profilo, totali, audience, tutti i post ────────
-    const [profile, totalsResp, posts, audience] = await Promise.all([
-      fetchProfile(igUserId),
-      fetchDayTotals(igUserId),
-      fetchRecentPosts(igUserId),
-      fetchAudience(igUserId),
+    const { since, until } = rangeSinceUntil(1);
+    const [profile, totalsResp, mediaResp, audience] = await Promise.all([
+      fetchProfile(gql, igUserId),
+      fetchDayTotals(gql, igUserId, since, until),
+      fetchMedia(gql, igUserId, 30),
+      fetchAudience(gql, igUserId),
     ]);
 
     const { totals, errors: totErr } = totalsResp;
     fbErrors = [...fbErrors, ...totErr];
+    if (mediaResp.error) {
+      fbErrors.push(`media insights: ${mediaResp.error}`);
+    }
+    const posts = mediaResp.posts;
 
     // 1. daily_snapshot (upsert per data)
     await db.execute({
@@ -297,7 +216,7 @@ async function main() {
 
     // 3. audience_snapshot
     const audStatements = [];
-    for (const [breakdown, rows] of Object.entries(audience)) {
+    for (const [breakdown, rows] of Object.entries(audience || {})) {
       for (const { key, value } of rows) {
         audStatements.push({
           sql: `INSERT OR REPLACE INTO audience_snapshot (date, breakdown, key, value)

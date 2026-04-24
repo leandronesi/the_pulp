@@ -62,6 +62,13 @@ jobs:
           IG_PAGE_ID: ${{ secrets.IG_PAGE_ID }}
         run: node scripts/export-json.js
 
+      # App.jsx importa staticamente ./config.js (che è gitignorato). Su CI
+      # serve uno stub per far passare il bundling di Vite. In static mode
+      # il contenuto non viene mai usato — i dati arrivano da /data.json.
+      - name: Stub config.js per il bundler
+        working-directory: ig-dashboard
+        run: cp src/config.example.js src/config.js
+
       - name: Build static site
         working-directory: ig-dashboard
         env:

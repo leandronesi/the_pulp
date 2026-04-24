@@ -12,6 +12,14 @@ Tipi di kind:
 
 ---
 
+## [2026-04-24] refactor | Dashboard arricchito: tier pill, sparkline, trend
+- `erTier()` in App.jsx mappa ER su excellent/good/avg/poor usando [benchmarks.md](../.claude/skills/pulp-briefing/references/benchmarks.md). Pill renderizzato sotto l'ER nel hero card
+- `Sparkline` component (recharts AreaChart minimale) sotto ogni PostCard che ha ≥2 righe in `post_snapshot` — curva di reach nel tempo visibile a colpo d'occhio
+- Sparkline follower trend nella KpiCard dei Followers (si riempie da ≥2 `daily_snapshot`)
+- `scripts/export-json.js` ora legge anche da Turso: `post_snapshot` per histories + `daily_snapshot` serie trend. Aggiunto `postHistory` e `followerTrend` al payload data.json (81KB → 87KB)
+- Workflow `publish-dashboard.yml` passa anche TURSO_DATABASE_URL e TURSO_AUTH_TOKEN all'export step
+- `fakeData.js` ora genera histories sigmoidi e trend follower coerenti per il demo mode
+
 ## [2026-04-24] init | Wiki bootstrap in pattern Karpathy
 - Creata struttura `wiki/`: `index.md`, `log.md`, `architecture.md`, `decisions/`, `concepts/`, `audits/`
 - Primi 5 ADR ingested dalle discussioni precedenti (Turso, fresh/full split, static deploy, skill briefing, FB Graph API)

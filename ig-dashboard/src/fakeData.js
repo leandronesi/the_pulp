@@ -140,6 +140,60 @@ export function generateFakeData(dateRange) {
   }
   posts.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
+  // Histories simulate: per ogni post generiamo ~15 punti sulla curva di
+  // crescita dal publish ad ora, con pattern sigmoide (crescita rapida nelle
+  // prime 24-48h poi plateau).
+  const postHistory = {};
+  for (const p of posts) {
+    const publishMs = new Date(p.timestamp).getTime();
+    const nowMs = now;
+    const span = nowMs - publishMs;
+    if (span < 3600000) continue; // < 1h, no curva sensata
+    const points = 14;
+    const reachFinal = p.insights.data.find((x) => x.name === "reach").values[0]
+      .value;
+    const likesFinal = p.like_count;
+    const savedFinal = p.insights.data.find((x) => x.name === "saved").values[0]
+      .value;
+    const sharesFinal = p.insights.data.find((x) => x.name === "shares")
+      .values[0].value;
+    const viewsFinal = p.insights.data.find((x) => x.name === "views").values[0]
+      .value;
+    const history = [];
+    for (let i = 0; i < points; i++) {
+      const t = i / (points - 1);
+      // curva tipo 1 - e^-5t → parte ripida poi plateau
+      const progress = 1 - Math.exp(-5 * t);
+      const ts = publishMs + t * span;
+      history.push({
+        t: Math.floor(ts),
+        reach: Math.floor(reachFinal * progress),
+        likes: Math.floor(likesFinal * progress),
+        comments: Math.floor((p.comments_count || 0) * progress),
+        saved: Math.floor(savedFinal * progress),
+        shares: Math.floor(sharesFinal * progress),
+        views: Math.floor(viewsFinal * progress),
+      });
+    }
+    postHistory[p.id] = history;
+  }
+
+  // Follower trend fake — un punto al giorno con leggera salita
+  const followerTrend = [];
+  const endFollowers = account.followers_count;
+  for (let i = dateRange - 1; i >= 0; i--) {
+    const d = new Date(now - i * 86400000);
+    const daysAgo = i;
+    followerTrend.push({
+      date: d.toISOString().slice(0, 10),
+      followers: endFollowers - Math.floor(daysAgo * r(0.3, 1.2)),
+      follows: account.follows_count,
+      reach: ri(100, 900),
+      engaged: ri(20, 150),
+      interactions: ri(10, 80),
+    });
+  }
+
   // Audience (lifetime, non cambia con range)
   const audience = {
     age: [
@@ -171,7 +225,16 @@ export function generateFakeData(dateRange) {
     ],
   };
 
-  return { account, totals, totalsPrev, reachDaily, posts, audience };
+  return {
+    account,
+    totals,
+    totalsPrev,
+    reachDaily,
+    posts,
+    audience,
+    postHistory,
+    followerTrend,
+  };
 }
 
 export const isFakeToken = (token) =>

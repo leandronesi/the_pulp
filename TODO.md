@@ -48,10 +48,12 @@ Lista viva. Aggiornata ad ogni sessione. Quello che è `[x]` non serve più disc
 ## 🟡 Medium term (quando c'è più dati accumulati)
 
 ### Dashboard arricchito
-- [ ] **Growth curve per post**: chart che mostra `post_snapshot` time series per un post selezionato. Sblocca quando abbiamo ≥3 giorni di fresh snapshot
-- [ ] **Follower trend chart**: usa `daily_snapshot` serie storica invece di solo numero corrente
-- [ ] **Audience shift**: delta tra due date sui breakdown demographics
-- [ ] **Benchmark pill** sotto ER nel hero: "tier good" / "tier excellent"
+- [x] **Growth curve per post** come sparkline in PostCard — scritto il 2026-04-24, curva si riempie via via che post_snapshot accumula
+- [x] **Follower trend** come sparkline nella KpiCard Followers — necessita ≥2 daily_snapshot per apparire
+- [x] **Benchmark pill** sotto ER nel hero — tier excellent/good/avg/poor
+- [ ] **Audience shift**: delta tra due date sui breakdown demographics (serve ≥2 audience_snapshot)
+- [ ] Chart dedicato "Trend storico" con reach+engaged+interactions nel tempo (oltre al solo followers sparkline)
+- [ ] Quando un post ha storico ricco (>10 punti), permettere click → modal con chart full-size e tutte le metriche (reach/like/saved/shares) overlaid
 - [ ] **Refresh rate check**: il publish-dashboard workflow potrebbe leggere da Turso invece di rifetchare Graph API (riduce call a Meta, unifica source of truth). Vedi nota in [wiki/decisions/003-static-deploy.md](wiki/decisions/003-static-deploy.md)
 
 ### Analisi on-demand

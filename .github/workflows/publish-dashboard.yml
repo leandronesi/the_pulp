@@ -55,11 +55,13 @@ jobs:
             exit 1
           fi
 
-      - name: Export data.json from Graph API
+      - name: Export data.json from Graph API + Turso history
         working-directory: ig-dashboard
         env:
           IG_PAGE_TOKEN: ${{ secrets.IG_PAGE_TOKEN }}
           IG_PAGE_ID: ${{ secrets.IG_PAGE_ID }}
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
         run: node scripts/export-json.js
 
       # App.jsx importa staticamente ./config.js (che è gitignorato). Su CI

@@ -11,6 +11,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { createClient } from "@libsql/client";
 import { isFakeToken } from "../src/fakeData.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -111,6 +112,71 @@ async function fetchMedia(ig) {
   }
 }
 
+// Storico post + daily da Turso (facoltativo: se env assenti → ritorna vuoti,
+// il dashboard gestisce la mancanza con sparkline nascosti).
+async function fetchHistoryFromTurso(postIds) {
+  const url = process.env.TURSO_DATABASE_URL;
+  if (!url) {
+    console.log("TURSO_DATABASE_URL assente — skip history, sparkline vuoti");
+    return { postHistory: {}, followerTrend: [] };
+  }
+  try {
+    const db = createClient({
+      url,
+      authToken: process.env.TURSO_AUTH_TOKEN,
+    });
+
+    // Serie storica post snapshot (per i post nel feed attuale)
+    const postHistory = {};
+    if (postIds.length > 0) {
+      const placeholders = postIds.map(() => "?").join(",");
+      const res = await db.execute({
+        sql: `SELECT post_id, fetched_at, reach, like_count, comments_count, saved, shares, views
+              FROM post_snapshot
+              WHERE post_id IN (${placeholders})
+              ORDER BY fetched_at ASC`,
+        args: postIds,
+      });
+      for (const row of res.rows) {
+        const id = row.post_id;
+        if (!postHistory[id]) postHistory[id] = [];
+        postHistory[id].push({
+          t: Number(row.fetched_at),
+          reach: Number(row.reach) || 0,
+          likes: Number(row.like_count) || 0,
+          comments: Number(row.comments_count) || 0,
+          saved: Number(row.saved) || 0,
+          shares: Number(row.shares) || 0,
+          views: Number(row.views) || 0,
+        });
+      }
+    }
+
+    // Serie storica daily (follower trend + reach giornaliero reale)
+    const dayRes = await db.execute(
+      `SELECT date, followers_count, follows_count, media_count,
+              reach, accounts_engaged, total_interactions
+       FROM daily_snapshot ORDER BY date ASC`
+    );
+    const followerTrend = dayRes.rows.map((r) => ({
+      date: r.date,
+      followers: Number(r.followers_count) || 0,
+      follows: Number(r.follows_count) || 0,
+      reach: Number(r.reach) || 0,
+      engaged: Number(r.accounts_engaged) || 0,
+      interactions: Number(r.total_interactions) || 0,
+    }));
+
+    console.log(
+      `History da Turso: ${Object.keys(postHistory).length} post con storico, ${followerTrend.length} giorni nel trend`
+    );
+    return { postHistory, followerTrend };
+  } catch (e) {
+    console.warn(`History Turso fetch fallito: ${e.message} — continuo senza`);
+    return { postHistory: {}, followerTrend: [] };
+  }
+}
+
 async function fetchAudience(ig) {
   const breakdowns = ["age", "gender", "city", "country"];
   const out = {};
@@ -184,12 +250,18 @@ async function main() {
     ranges[d] = await snapshotForRange(igUserId, d);
   }
 
+  // Storico opzionale da Turso (post_snapshot + daily_snapshot)
+  const postIds = posts.map((p) => p.id);
+  const { postHistory, followerTrend } = await fetchHistoryFromTurso(postIds);
+
   const payload = {
     generatedAt: Date.now(),
     profile,
     posts,
     audience,
     ranges,
+    postHistory,
+    followerTrend,
   };
 
   writeFileSync(OUT_FILE, JSON.stringify(payload));

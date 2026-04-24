@@ -90,6 +90,16 @@ const MEDIA_TYPE_COLORS = {
 const DAYS_IT = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"];
 const HOUR_BUCKETS = ["00–04", "04–08", "08–12", "12–16", "16–20", "20–24"];
 
+// Tier IG ER — stessi valori del references/benchmarks.md della skill
+// pulp-briefing. Se cambi qui, sincronizza anche la skill.
+const erTier = (er) => {
+  if (er == null || Number.isNaN(er)) return null;
+  if (er > 6) return { label: "excellent", color: "#EDE5D0" };
+  if (er >= 3) return { label: "good", color: "#7FB3A3" };
+  if (er >= 1) return { label: "avg", color: "#D4A85C" };
+  return { label: "poor", color: "#D98B6F" };
+};
+
 // Extract a metric value from the embedded insights array on a post
 const metricOf = (post, name) =>
   post.insights?.data?.find((x) => x.name === name)?.values?.[0]?.value ?? 0;
@@ -115,6 +125,8 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [sortMode, setSortMode] = useState("reach");
   const [staticData, setStaticData] = useState(null);
+  const [postHistory, setPostHistory] = useState({});
+  const [followerTrend, setFollowerTrend] = useState([]);
 
   useEffect(() => {
     const load = async () => {
@@ -143,6 +155,8 @@ export default function App() {
           setInsightsPrev({ totals: range?.totalsPrev || {} });
           setPosts(data.posts || []);
           setAudience(data.audience);
+          setPostHistory(data.postHistory || {});
+          setFollowerTrend(data.followerTrend || []);
           setWarnings(range?.warnings || []);
         } catch (e) {
           setError(`Impossibile caricare data.json: ${e.message}`);
@@ -160,6 +174,8 @@ export default function App() {
         setInsightsPrev({ totals: fake.totalsPrev });
         setPosts(fake.posts);
         setAudience(fake.audience);
+        setPostHistory(fake.postHistory || {});
+        setFollowerTrend(fake.followerTrend || []);
         setWarnings([]);
         setLoading(false);
         return;
@@ -561,6 +577,7 @@ export default function App() {
                 icon={<Users size={16} />}
                 label="Followers"
                 value={fmt(account.followers_count)}
+                sparkline={followerTrend.map((d) => ({ reach: d.followers }))}
                 accent="from-[#EDE5D0] to-[#D4A85C]"
               />
               <KpiCard
@@ -581,6 +598,7 @@ export default function App() {
                 label={`Engagement · ${dateRange}g`}
                 value={fmtPct(engagementRate)}
                 deltaPct={delta(engagementRate, engagementRatePrev)}
+                tier={erTier(engagementRate)}
                 accent="from-[#3E7A66] to-[#0E4A3E]"
               />
             </section>
@@ -858,7 +876,12 @@ export default function App() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {sortedPosts.slice(0, 12).map((p, i) => (
-                    <PostCard key={p.id} post={p} rank={i + 1} />
+                    <PostCard
+                      key={p.id}
+                      post={p}
+                      rank={i + 1}
+                      history={postHistory[p.id]}
+                    />
                   ))}
                 </div>
               </section>
@@ -1030,7 +1053,7 @@ export default function App() {
 }
 
 // ─── Subcomponents ──────────────────────────────────────────────────────────
-function KpiCard({ icon, label, value, accent, deltaPct }) {
+function KpiCard({ icon, label, value, accent, deltaPct, tier, sparkline }) {
   return (
     <div className="glass rounded-2xl p-5 relative overflow-hidden group transition">
       <div
@@ -1041,9 +1064,20 @@ function KpiCard({ icon, label, value, accent, deltaPct }) {
         <span className="uppercase tracking-wider">{label}</span>
       </div>
       <div className="display-font text-4xl text-white font-light">{value}</div>
-      {deltaPct != null && (
-        <div className="mt-2">
-          <DeltaPill value={deltaPct} />
+      <div className="mt-2 flex items-center gap-2 flex-wrap">
+        {deltaPct != null && <DeltaPill value={deltaPct} />}
+        {tier && (
+          <span
+            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] mono-font uppercase tracking-wider"
+            style={{ backgroundColor: `${tier.color}15`, color: tier.color }}
+          >
+            tier {tier.label}
+          </span>
+        )}
+      </div>
+      {sparkline && sparkline.length >= 2 && (
+        <div className="mt-3 -mx-1">
+          <Sparkline data={sparkline} height={24} />
         </div>
       )}
     </div>
@@ -1128,7 +1162,31 @@ function ContentTypeTile({ data }) {
   );
 }
 
-function PostCard({ post, rank }) {
+function Sparkline({ data, height = 28 }) {
+  if (!data || data.length < 2) return null;
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <AreaChart data={data} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+        <defs>
+          <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#EDE5D0" stopOpacity={0.4} />
+            <stop offset="100%" stopColor="#EDE5D0" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <Area
+          type="monotone"
+          dataKey="reach"
+          stroke="#EDE5D0"
+          strokeWidth={1.5}
+          fill="url(#sparkGrad)"
+          isAnimationActive={false}
+        />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+function PostCard({ post, rank, history }) {
   const thumb = post.thumbnail_url || post.media_url;
   const caption = (post.caption || "").slice(0, 80);
   const isVideo = post.media_type === "VIDEO" || post.media_type === "REELS";
@@ -1197,6 +1255,14 @@ function PostCard({ post, rank }) {
             label="shares"
           />
         </div>
+        {history && history.length >= 2 && (
+          <div className="mt-3 pt-3 border-t border-white/5">
+            <div className="text-[9px] text-white/30 mono-font uppercase tracking-wider mb-1">
+              curva reach · {history.length} punti
+            </div>
+            <Sparkline data={history} />
+          </div>
+        )}
       </div>
     </a>
   );

@@ -1,12 +1,12 @@
 name: Publish dashboard · GitHub Pages
 
 # Pre-rendera data.json (chiamate Graph API con token da Secrets), builda Vite
-# e deploya su GitHub Pages. Gira ogni 4h in sincronia col fresh snapshot, più
-# su ogni push a main (così un cambio UI arriva subito).
+# e deploya su GitHub Pages. Gira ogni 4h in sincronia col fresh snapshot,
+# più su ogni push a main.
 
 on:
   schedule:
-    - cron: '15 */4 * * *'  # 15 min dopo l'ora, ogni 4h (offset dai snapshot)
+    - cron: '15 */4 * * *'
   push:
     branches: [main]
     paths:
@@ -14,23 +14,22 @@ on:
       - '.github/workflows/publish-dashboard.yml'
   workflow_dispatch:
 
+# Pattern canonico GitHub Pages: build e deploy in job separati. Il build NON
+# usa `environment: github-pages` così i repo secrets passano senza scoping
+# ambiguo; solo il deploy lo usa per pubblicare.
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Una sola run concorrente; se ne parte un'altra mentre questa gira, attende.
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
 
@@ -43,6 +42,18 @@ jobs:
       - name: Install
         working-directory: ig-dashboard
         run: npm ci
+
+      - name: Sanity check secrets
+        env:
+          IG_PAGE_TOKEN: ${{ secrets.IG_PAGE_TOKEN }}
+          IG_PAGE_ID: ${{ secrets.IG_PAGE_ID }}
+        run: |
+          echo "IG_PAGE_TOKEN length: ${#IG_PAGE_TOKEN}"
+          echo "IG_PAGE_ID length: ${#IG_PAGE_ID}"
+          if [ -z "$IG_PAGE_TOKEN" ]; then
+            echo "::error::Secret IG_PAGE_TOKEN non disponibile nel workflow"
+            exit 1
+          fi
 
       - name: Export data.json from Graph API
         working-directory: ig-dashboard
@@ -66,6 +77,13 @@ jobs:
         with:
           path: ig-dashboard/dist
 
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

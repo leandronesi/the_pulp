@@ -80,10 +80,13 @@ async function fetchHistoryFromTurso(postIds) {
       }
     }
 
-    // Serie storica daily (follower trend + reach giornaliero reale)
+    // Serie storica daily — completa con tutte le 5 metriche.
+    // Serve per due cose: trend follower + base per il calcolo client-side
+    // dei totali su range custom (vedi App.jsx static mode).
     const dayRes = await db.execute(
       `SELECT date, followers_count, follows_count, media_count,
-              reach, accounts_engaged, total_interactions
+              reach, profile_views, website_clicks,
+              accounts_engaged, total_interactions
        FROM daily_snapshot ORDER BY date ASC`
     );
     const followerTrend = dayRes.rows.map((r) => ({
@@ -91,6 +94,8 @@ async function fetchHistoryFromTurso(postIds) {
       followers: Number(r.followers_count) || 0,
       follows: Number(r.follows_count) || 0,
       reach: Number(r.reach) || 0,
+      profile_views: Number(r.profile_views) || 0,
+      website_clicks: Number(r.website_clicks) || 0,
       engaged: Number(r.accounts_engaged) || 0,
       interactions: Number(r.total_interactions) || 0,
     }));

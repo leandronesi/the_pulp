@@ -78,6 +78,50 @@ const FAKE_MODE = !STATIC_MODE && isFakeToken(TOKEN);
 // stringhe runtime, solo quelle in index.html).
 const ASSET = (p) => `${import.meta.env.BASE_URL || "/"}${p.replace(/^\//, "")}`;
 
+// Calcolo client-side dei totali su un range arbitrario, dai daily_snapshot
+// esportati nel data.json. Usato in static mode quando l'utente sceglie un
+// range custom (i 3 preset usano i ranges precomputati lato workflow).
+//
+// Caveat: reach e accounts_engaged sono "unique users" lato IG. Sommarli per
+// giorno sovrastima rispetto al "unique della finestra" che IG ritornerebbe
+// (un utente attivo in 2 giorni conta 2). Per total_interactions / profile_views
+// / website_clicks la somma è esatta. Etichettato con "*" nella UI.
+function computeTotalsFromDaily(daily, sinceUnixSec, untilUnixSec) {
+  const sinceMs = sinceUnixSec * 1000;
+  const untilMs = untilUnixSec * 1000;
+  const out = {
+    reach: 0,
+    profile_views: 0,
+    website_clicks: 0,
+    accounts_engaged: 0,
+    total_interactions: 0,
+  };
+  for (const d of daily || []) {
+    const t = new Date(`${d.date}T00:00:00Z`).getTime();
+    if (t < sinceMs || t > untilMs) continue;
+    out.reach += d.reach || 0;
+    out.profile_views += d.profile_views || 0;
+    out.website_clicks += d.website_clicks || 0;
+    out.accounts_engaged += d.engaged || 0;
+    out.total_interactions += d.interactions || 0;
+  }
+  return out;
+}
+
+function filterReachDaily(daily, sinceUnixSec, untilUnixSec) {
+  const sinceMs = sinceUnixSec * 1000;
+  const untilMs = untilUnixSec * 1000;
+  return (daily || [])
+    .filter((d) => {
+      const t = new Date(`${d.date}T00:00:00Z`).getTime();
+      return t >= sinceMs && t <= untilMs;
+    })
+    .map((d) => ({
+      value: d.reach || 0,
+      end_time: `${d.date}T00:00:00+0000`,
+    }));
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────
 const fmt = (n) => {
   if (n == null || Number.isNaN(n)) return "—";
@@ -219,7 +263,9 @@ export default function App() {
   const [error, setError] = useState(null);
   const [warnings, setWarnings] = useState([]);
   // Selezione periodo: preset (7/30/90) o custom (da/a date picker).
-  // In static mode custom è disabilitato perché data.json ha solo preset precomputati.
+  // In static mode i 3 preset leggono `data.ranges[N]` (precomputato dal workflow,
+  // valori IG-unique corretti); il custom calcola al volo dai daily_snapshot
+  // (somma per giorno, vedi computeTotalsFromDaily — caveat sui unique).
   const [selection, setSelection] = useState({
     preset: 30,
     customFrom: null, // Date o null
@@ -227,8 +273,7 @@ export default function App() {
   });
   const [customOpen, setCustomOpen] = useState(false);
 
-  const isCustom =
-    !!selection.customFrom && !!selection.customTo && !STATIC_MODE;
+  const isCustom = !!selection.customFrom && !!selection.customTo;
 
   const { days, sinceUnix, untilUnix } = useMemo(() => {
     if (isCustom) {
@@ -305,17 +350,38 @@ export default function App() {
             setStaticData(data);
           }
           setAccount(data.profile);
-          const range = data.ranges?.[dateRange] || data.ranges?.[30];
-          setInsights({
-            totals: range?.totals || {},
-            reachDaily: range?.reachDaily || [],
-          });
-          setInsightsPrev({ totals: range?.totalsPrev || {} });
           setPosts(data.posts || []);
           setAudience(data.audience);
           setPostHistory(data.postHistory || {});
-          setFollowerTrend(data.followerTrend || []);
-          setWarnings(range?.warnings || []);
+          const daily = data.followerTrend || [];
+          setFollowerTrend(daily);
+
+          // Preset 7/30/90 → valori IG-unique precomputati (corretti).
+          // Custom → somma per giorno dai daily_snapshot (approssimazione).
+          const preset = selection.preset;
+          if (preset && data.ranges?.[preset]) {
+            const range = data.ranges[preset];
+            setInsights({
+              totals: range.totals || {},
+              reachDaily: range.reachDaily || [],
+            });
+            setInsightsPrev({ totals: range.totalsPrev || {} });
+            setWarnings(range.warnings || []);
+          } else {
+            const span = untilUnix - sinceUnix;
+            setInsights({
+              totals: computeTotalsFromDaily(daily, sinceUnix, untilUnix),
+              reachDaily: filterReachDaily(daily, sinceUnix, untilUnix),
+            });
+            setInsightsPrev({
+              totals: computeTotalsFromDaily(
+                daily,
+                sinceUnix - span,
+                sinceUnix
+              ),
+            });
+            setWarnings([]);
+          }
         } catch (e) {
           setError(`Impossibile caricare data.json: ${e.message}`);
         } finally {
@@ -754,7 +820,6 @@ export default function App() {
             <DateRangeSelector
               selection={selection}
               isCustom={isCustom}
-              staticMode={STATIC_MODE}
               customOpen={customOpen}
               setCustomOpen={setCustomOpen}
               onPreset={setPreset}
@@ -1547,7 +1612,6 @@ function TabTrigger({ value, icon, label }) {
 function DateRangeSelector({
   selection,
   isCustom,
-  staticMode,
   customOpen,
   setCustomOpen,
   onPreset,
@@ -1617,23 +1681,12 @@ function DateRangeSelector({
           </button>
         );
       })}
-      <Popover.Root
-        open={customOpen && !staticMode}
-        onOpenChange={staticMode ? undefined : setCustomOpen}
-      >
+      <Popover.Root open={customOpen} onOpenChange={setCustomOpen}>
         <Popover.Trigger asChild>
           <button
-            disabled={staticMode}
-            title={
-              staticMode
-                ? "Range custom disponibile solo in dev (il sito pubblico ha solo 7/30/90 pre-calcolati)"
-                : undefined
-            }
             className={`px-3 py-1.5 text-xs rounded-full transition mono-font flex items-center gap-1.5 whitespace-nowrap max-w-full ${
               isCustom
                 ? "bg-[#EDE5D0] text-[#0B3A30] font-semibold"
-                : staticMode
-                ? "text-white/20 cursor-not-allowed"
                 : "text-white/60 hover:text-white"
             }`}
           >

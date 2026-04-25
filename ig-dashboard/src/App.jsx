@@ -15,6 +15,7 @@ import {
   ResponsiveContainer,
   AreaChart,
   Area,
+  ComposedChart,
   ScatterChart,
   Scatter,
   BarChart,
@@ -146,6 +147,21 @@ const fmtDate = (d) =>
     day: "2-digit",
     month: "short",
   });
+
+// Palette pallini-post sul chart Reach: un colore per tipo di contenuto.
+// Ricalca la palette brand (gold = formato di punta, sage = secondario, ecc).
+const POST_DOT_COLORS = {
+  REELS: "#D4A85C",
+  CAROUSEL_ALBUM: "#7FB3A3",
+  IMAGE: "#EDE5D0",
+  VIDEO: "#D98B6F",
+};
+const POST_DOT_LABELS = {
+  REELS: "Reel",
+  CAROUSEL_ALBUM: "Carosello",
+  IMAGE: "Foto",
+  VIDEO: "Video",
+};
 
 const daysAgoTs = (n) => Math.floor((Date.now() - n * 86400000) / 1000);
 
@@ -571,6 +587,41 @@ export default function App() {
     });
   }, [posts, sinceUnix, untilUnix]);
 
+  // Pallini-post: pre-mergiamo i post nelle righe del chart giornaliero.
+  // Un solo dataset = XAxis tiene l'ordine cronologico (dataset separati
+  // farebbero appendere date fuori sequenza, vedi commit precedente).
+  // Per ogni giorno aggiungiamo un campo dot_<TYPE>=reach quando c'è almeno
+  // un post di quel tipo, così lo Scatter di quel tipo lo plottera' sul giorno.
+  const reachChartWithDots = useMemo(() => {
+    if (!reachChartData.length) return [];
+    const postsByDate = {};
+    for (const p of postsInRange) {
+      const d = fmtDate(p.timestamp);
+      if (!postsByDate[d]) postsByDate[d] = [];
+      postsByDate[d].push(p);
+    }
+    return reachChartData.map((row) => {
+      const dayPosts = postsByDate[row.date] || [];
+      const out = { ...row, _posts: dayPosts };
+      for (const p of dayPosts) {
+        const t = resolveMediaType(p);
+        const key = POST_DOT_COLORS[t] ? t : "IMAGE";
+        out[`dot_${key}`] = row.reach;
+      }
+      return out;
+    });
+  }, [reachChartData, postsInRange]);
+
+  const postCountByType = useMemo(() => {
+    const counts = {};
+    for (const p of postsInRange) {
+      const t = resolveMediaType(p);
+      const key = POST_DOT_COLORS[t] ? t : "IMAGE";
+      counts[key] = (counts[key] || 0) + 1;
+    }
+    return counts;
+  }, [postsInRange]);
+
   const postsOutsideRange = posts.length - postsInRange.length;
 
   const postAnalyticsById = useMemo(
@@ -993,7 +1044,7 @@ export default function App() {
                   <div className="flex-1 min-h-[240px] sm:min-h-[260px] overflow-x-auto no-scrollbar">
                     <div className="h-[240px] sm:h-[260px] min-w-[520px] sm:min-w-0">
                     <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={reachChartData}>
+                    <ComposedChart data={reachChartWithDots}>
                       <defs>
                         <linearGradient
                           id="reachGrad"
@@ -1028,18 +1079,48 @@ export default function App() {
                         tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }}
                         tickFormatter={fmt}
                       />
-                      <Tooltip content={<DarkTooltip />} />
+                      <ZAxis range={[70, 70]} />
+                      <Tooltip content={<ReachWithPostsTooltip />} />
                       <Area
                         type="monotone"
                         dataKey="reach"
+                        name="Reach"
                         stroke="#EDE5D0"
                         strokeWidth={2}
                         fill="url(#reachGrad)"
                       />
-                    </AreaChart>
+                      {Object.keys(POST_DOT_COLORS).map((type) => (
+                        <Scatter
+                          key={type}
+                          dataKey={`dot_${type}`}
+                          name={POST_DOT_LABELS[type]}
+                          fill={POST_DOT_COLORS[type]}
+                          stroke="#0B3A30"
+                          strokeWidth={1.5}
+                          isAnimationActive={false}
+                        />
+                      ))}
+                    </ComposedChart>
                   </ResponsiveContainer>
                     </div>
                   </div>
+                  {Object.keys(postCountByType).length > 0 && (
+                    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] mono-font text-white/50">
+                      <span className="text-white/30">post:</span>
+                      {Object.entries(postCountByType).map(([type, count]) => (
+                        <span
+                          key={type}
+                          className="flex items-center gap-1.5"
+                        >
+                          <span
+                            className="w-2 h-2 rounded-full"
+                            style={{ backgroundColor: POST_DOT_COLORS[type] }}
+                          />
+                          {POST_DOT_LABELS[type]} · {count}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2264,6 +2345,58 @@ function DarkTooltip({ active, payload, label }) {
           </span>
         </div>
       ))}
+    </div>
+  );
+}
+
+// Tooltip del chart Reach giornaliero: mostra reach del giorno + lista
+// dei post pubblicati quel giorno (label tipo + caption breve, colore-coded).
+function ReachWithPostsTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  const reachItem = payload.find((p) => p.dataKey === "reach");
+  const reach = reachItem?.value;
+  const dayPosts = payload[0]?.payload?._posts || [];
+  return (
+    <div
+      className="glass rounded-xl px-4 py-3 text-xs max-w-xs"
+      style={{ fontFamily: "JetBrains Mono" }}
+    >
+      <div className="text-white/50 mb-1">{label}</div>
+      {reach != null && (
+        <div className="flex items-center gap-2 text-white mb-1">
+          <div
+            className="w-2 h-2 rounded-full"
+            style={{ backgroundColor: "#EDE5D0" }}
+          />
+          <span className="text-white/70">reach:</span>
+          <span className="font-semibold">{fmt(reach)}</span>
+        </div>
+      )}
+      {dayPosts.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-white/10 space-y-1.5">
+          {dayPosts.map((p) => {
+            const t = resolveMediaType(p);
+            const key = POST_DOT_COLORS[t] ? t : "IMAGE";
+            const caption = (p.caption || "").slice(0, 80);
+            return (
+              <div key={p.id} className="flex gap-2">
+                <div
+                  className="w-2 h-2 mt-1 rounded-full shrink-0"
+                  style={{ backgroundColor: POST_DOT_COLORS[key] }}
+                />
+                <div className="text-white/80 leading-snug">
+                  <span className="text-white/50">
+                    {POST_DOT_LABELS[key]}
+                  </span>
+                  {caption && (
+                    <span className="text-white/70"> · {caption}</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

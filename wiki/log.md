@@ -12,6 +12,28 @@ Tipi di kind:
 
 ---
 
+## [2026-04-25] refactor | App.jsx modularizzato (2811 → 1628 righe)
+
+App.jsx aveva superato i 2800 righe — il vincolo "monolitico finché non ingestibile" era stato passato (costo in token quando spawno Sonnet su task ristretti).
+
+**Sprint orchestrato Opus → Sonnet × 5 paralleli**:
+- Sprint 0 (Opus): estratti helper top-level in `src/utils/format.js` (fmt, fmtDate, delta, ...) e `src/utils/tiers.js` (erTier, reachRateTier, ..., MEDIA_TYPE_LABELS, POST_DOT_COLORS, costanti heatmap).
+- Sprint 1-5 (5 Sonnet in parallelo): ognuno crea un file in `src/components/` senza modificare App.jsx. Output:
+  - `tooltips.jsx` — InfoTip + DarkTooltip + ReachWithPostsTooltip + ScatterTooltip
+  - `stories.jsx` — StoriesStrip + StoriesTab + StoryKpi + StoryRow + StoryMetric
+  - `DateRangeSelector.jsx` — Radix Popover + DayPicker
+  - `kpi-cards.jsx` — DeltaPill + RateCard + ReachTrio + KpiCard + SummaryRow + ContentMixStat + Sparkline (export per riuso)
+  - `posts.jsx` — ContentTypeTile + LifecycleMiniChart + PostCard + Metric + AudiencePanel
+- Fase 3 (Opus): integrazione manuale in App.jsx (imports + delete blocchi), pulizia degli import morti (rimossi createPortal, Popover, DayPicker, locale `it`, e 4 lucide icons), build verde.
+
+Trappole risolte durante il refactor:
+- `Sparkline` era usato sia da KpiCard sia da PostCard → un agente l'aveva duplicato come internal in kpi-cards.jsx. Fix: cambiato in `export function`, posts.jsx la importa da `./kpi-cards.jsx`.
+- `ContentMixStat` stessa storia → tenuto in kpi-cards.jsx (è una "stat-tile" affine al gruppo), posts.jsx lo importa.
+
+Pattern di lavoro convalidato (vedi memory globale `feedback_orchestrator_pattern.md`): Opus fa planning + integration + verify, Sonnet fa estrazione meccanica in parallelo. ROI immediato sui prossimi task — ora un Sonnet che modifica `StoriesTab` carica 298 righe invece di 2800.
+
+---
+
 ## [2026-04-24] feat | Milestone 1 analytics: velocity, benchmark ratio, scatter quadrants, lifecycle cards
 
 - Creato [ig-dashboard/src/analytics.js](../ig-dashboard/src/analytics.js) come modulo shared per:

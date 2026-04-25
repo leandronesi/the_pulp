@@ -35,7 +35,7 @@ Non è solo un dashboard — è la **base di un data analyst / social media mana
 
 **Frontend (dashboard):**
 - **Vite 5** (dev server, build)
-- **React 18** (un solo componente monolitico in [src/App.jsx](src/App.jsx))
+- **React 18** ([src/App.jsx](src/App.jsx) come orchestratore + sub-componenti modulari in [src/components/](src/components/))
 - **Tailwind 3** (via PostCSS, utility inline nel JSX)
 - **recharts** (grafici Area/Bar/Scatter)
 - **lucide-react** (icone)
@@ -275,7 +275,7 @@ Monocromatica verde foresta + cream, derivata dal logo:
 - Font: Fraunces (display) + JetBrains Mono (testo tech), caricati via `@import` inline.
 - Stile: dark glassmorphism, palette verde foresta + cream (vedi sezione Palette).
 - Nessun test, nessun lint config, nessun routing.
-- App.jsx resta **monolitico** finché non diventa ingestibile — non splittare preventivamente in tanti componenti.
+- App.jsx orchestra fetch + state + tab routing; i sub-componenti UI vivono in [src/components/](src/components/) (tooltips, kpi-cards, posts, stories, DateRangeSelector). Helper di formato in [src/utils/format.js](src/utils/format.js) e [src/utils/tiers.js](src/utils/tiers.js). Non duplicare componenti — se un primitive serve in più posti, esportalo.
 - Tutti i colori inline via arbitrary values Tailwind, non definiti in `tailwind.config.js`.
 
 ## Preferenze operative (regole del progetto)

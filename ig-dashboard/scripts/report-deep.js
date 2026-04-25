@@ -175,30 +175,74 @@ async function loadAll(db) {
   };
 }
 
+// ─── Restart detection ────────────────────────────────────────────────────
+// Se l'account ha avuto un buco lungo (es. 253g per Pulp), trattiamolo come
+// "ripartito": tutta l'analisi che segue lavora SOLO sui post post-ripartenza
+// e i daily da quella data in poi. La vita pre-pausa è citata una volta come
+// fatto storico nella sezione Identità, e poi sparisce — nessun pattern,
+// nessun top/bottom, nessuna "verita scomoda" su quel periodo.
+//
+// Soglia: gap > max(60g, 5x mediana). 60g e' il floor sicuro per non beccare
+// gap normali; 5x mediana scala col ritmo dell'account.
+
+function detectRestart(posts) {
+  if (posts.length < 3) return null;
+  const sorted = [...posts].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+  const gapsWithIndex = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const g =
+      (new Date(sorted[i].timestamp).getTime() -
+        new Date(sorted[i - 1].timestamp).getTime()) /
+      86400000;
+    gapsWithIndex.push({ idx: i, days: g });
+  }
+  const justGaps = gapsWithIndex.map((x) => x.days);
+  const med = median(justGaps);
+  const threshold = Math.max(60, med * 5);
+  const big = gapsWithIndex
+    .filter((x) => x.days >= threshold)
+    .sort((a, b) => b.days - a.days)[0];
+  if (!big) return null;
+  const restartPost = sorted[big.idx];
+  const lastPrePausePost = sorted[big.idx - 1];
+  const firstEverPost = sorted[0];
+  const restartDate = new Date(restartPost.timestamp);
+  const today = new Date();
+  return {
+    restart_iso: restartPost.timestamp,
+    restart_date_only: restartPost.timestamp.slice(0, 10),
+    pause_days: Math.round(big.days),
+    last_pre_pause_iso: lastPrePausePost.timestamp,
+    first_ever_iso: firstEverPost.timestamp,
+    days_since_restart: Math.floor(
+      (today.getTime() - restartDate.getTime()) / 86400000
+    ),
+    pre_pause_post_count: big.idx, // numero di post pre-ripartenza
+    post_restart_count: sorted.length - big.idx,
+  };
+}
+
 // ─── Pre-compute (i numeri che il LLM userà come fatti) ──────────────────
 
-function computeIdentity(daily, posts) {
-  const today = new Date();
-  const firstPost = posts.length
-    ? posts[posts.length - 1] // posts ordinati DESC
-    : null;
-  const firstDaily = daily[0];
+function computeIdentity(daily, postsActive, restart, postsTotalEver) {
   const lastDaily = daily[daily.length - 1];
-  const accountAgeDays = firstPost
-    ? Math.floor(
-        (today.getTime() - new Date(firstPost.timestamp).getTime()) / 86400000
-      )
-    : null;
+  const firstDailyActive = daily[0];
   return {
     followers_now: lastDaily?.followers ?? null,
     follows_now: lastDaily?.follows ?? null,
     media_count_now: lastDaily?.media_count ?? null,
-    first_post_date: firstPost?.timestamp ?? null,
-    first_daily_date: firstDaily?.date ?? null,
+    first_active_post_date: postsActive.length
+      ? postsActive[postsActive.length - 1].timestamp // DESC ordering
+      : null,
+    last_post_date: postsActive.length ? postsActive[0].timestamp : null,
+    first_daily_date: firstDailyActive?.date ?? null,
     last_daily_date: lastDaily?.date ?? null,
-    account_age_days: accountAgeDays,
-    daily_snapshots_count: daily.length,
-    posts_total: posts.length,
+    daily_snapshots_active_count: daily.length,
+    posts_in_current_phase: postsActive.length,
+    posts_total_ever: postsTotalEver,
+    restart, // null se nessun restart rilevato; altrimenti oggetto con dettagli pausa
   };
 }
 
@@ -378,9 +422,17 @@ REGOLE:
 1. **Italiano editoriale**, frasi medio-corte, trattini per ritmo, NO emoji, NO marketing-speak inglese ("engagement", "performance" usali in italiano se servono).
 2. **Account piccolo & nuovo**: i benchmark IG generici (3-6% ER = good) NON si applicano. Per micro-account 0-1k follower: ER tipico 5-15%, reach naturale <100% follower, follower-growth la metrica n.1. Per il reach la cosa che conta è il **trend** non il valore assoluto.
 3. **Cita sempre il post concreto** (caption reale, data) — mai "un contenuto recente". Mai inventare numeri non presenti nei dati.
-4. **Verità scomode obbligatorie**: cerca attivamente almeno 4 pattern negativi. Esempi di cosa cercare: stallo follower nonostante reach buona, format trascurato (es. zero reel da X giorni), caption troppo brevi/lunghe, mono-tematicità, gap di posting, mancanza di chiamate all'azione, audience che non matcha il contenuto.
+4. **Verità scomode obbligatorie**: cerca attivamente almeno 4 pattern negativi. Esempi di cosa cercare: stallo follower nonostante reach buona, format trascurato (es. zero reel da X giorni), caption troppo brevi/lunghe, mono-tematicità, gap di posting recenti, mancanza di chiamate all'azione, audience che non matcha il contenuto.
 5. **Topic clusters**: leggi le caption complete, raggruppa per tema reale (vino, paesaggio, persone, eventi, cucina, racconto storico, ecc). Ogni cluster: tema + post_ids che ci appartengono + take 1-2 righe sul perché funziona o no.
 6. **Strategia**: 3-5 azioni con format {action, why, success_metric}. Ogni azione deve essere fattibile in 30 giorni e misurabile (es. "pubblica 4 reel sotto i 30 secondi nel mese, target ER medio > 8%" non "fai più reel").
+
+7. **TRATTAMENTO DELLA RIPARTENZA — REGOLA CRITICA**: se nel payload identity.restart è presente (non null), significa che l'account ha avuto una pausa lunga e poi è ripartito. **Da quel momento in poi, l'account va trattato come una pagina nuova nata il giorno della ripartenza** (identity.restart.restart_iso). Tutti i post nel payload, le metriche, i top/bottom, la cadenza, la curva follower fanno già riferimento SOLO alla fase post-ripartenza — il filtro è già stato applicato lato dati, tu lavori solo sul "nuovo".
+
+   Implicazioni:
+   - L'identityNarrative deve presentare l'account come "ripartito X giorni fa", "nella sua nuova fase iniziata a [data]", "in fase di lancio". Niente discorsi su "378 giorni" o "11 aprile 2025" — quello era un'altra vita.
+   - Le verità scomode NON devono mai citare la pausa, il "vuoto editoriale", il "buco di N giorni", "ritmo storico", o equivalenti. La pausa è acqua passata, non un argomento. Concentrati su ciò che sta succedendo da quando è ripartito.
+   - La cadenza si valuta SOLO sui post della nuova fase. Se la nuova fase è di X giorni, calcola la frequenza vera del nuovo ritmo, non diluita dal passato.
+   - Se identity.restart è null, ignora questa regola e tratta l'account come continuo nel tempo.
 
 Ritorna SOLO JSON valido con questa forma esatta:
 {
@@ -450,13 +502,22 @@ function renderReport({
 }) {
   const L = [];
   const today = todayIsoDate();
+  const r = identity.restart;
   L.push(`# The Pulp · Fotografia analitica · ${fmtDate(today)}`);
   L.push("");
-  L.push(
-    `_Account snapshot al ${fmtDate(today)}. Storico Turso: ${
-      identity.daily_snapshots_count
-    } daily snapshot, ${identity.posts_total} post indicizzati._`
-  );
+  if (r) {
+    L.push(
+      `_Account ripartito il **${fmtDate(r.restart_iso)}** dopo una pausa di ${r.pause_days} giorni. ` +
+        `Questa fotografia analizza **solo** la nuova fase (${r.days_since_restart} giorni, ${identity.posts_in_current_phase} post). ` +
+        `La vita pre-pausa è citata come fatto storico nella sezione Identità e basta._`
+    );
+  } else {
+    L.push(
+      `_Account snapshot al ${fmtDate(today)}. Storico Turso: ${
+        identity.daily_snapshots_active_count
+      } daily snapshot, ${identity.posts_in_current_phase} post indicizzati._`
+    );
+  }
   L.push("");
   L.push("---");
   L.push("");
@@ -466,15 +527,28 @@ function renderReport({
   L.push("");
   L.push(`- **Follower attuali**: ${fmtN(identity.followers_now)}`);
   L.push(`- **Following**: ${fmtN(identity.follows_now)}`);
-  L.push(`- **Post totali**: ${identity.posts_total}`);
-  if (identity.first_post_date) {
+  if (r) {
     L.push(
-      `- **Primo post tracciato**: ${fmtDate(identity.first_post_date)} (account attivo da ~${identity.account_age_days} giorni)`
+      `- **Ripartenza**: ${fmtDate(r.restart_iso)} (~${r.days_since_restart} giorni fa)`
     );
+    L.push(
+      `- **Post nella nuova fase**: ${identity.posts_in_current_phase}`
+    );
+    L.push("");
+    L.push(
+      `> _Storico precedente: ${r.pre_pause_post_count} post tra ${fmtDate(r.first_ever_iso)} e ${fmtDate(r.last_pre_pause_iso)}, poi pausa di ${r.pause_days} giorni. Esclusi dall'analisi che segue._`
+    );
+  } else {
+    L.push(`- **Post indicizzati**: ${identity.posts_in_current_phase}`);
+    if (identity.first_active_post_date) {
+      L.push(
+        `- **Primo post tracciato**: ${fmtDate(identity.first_active_post_date)}`
+      );
+    }
   }
   if (identity.first_daily_date) {
     L.push(
-      `- **Storico daily**: ${fmtDate(identity.first_daily_date)} → ${fmtDate(identity.last_daily_date)}`
+      `- **Daily snapshot disponibili**: ${fmtDate(identity.first_daily_date)} → ${fmtDate(identity.last_daily_date)}`
     );
   }
   L.push("");
@@ -682,6 +756,11 @@ function renderReport({
   L.push("");
   L.push("## Note di metodo");
   L.push("");
+  if (r) {
+    L.push(
+      `- **Filtro ripartenza attivo**: tutte le metriche, tabelle e analisi narrative qui sopra fanno riferimento ai post pubblicati dal ${fmtDate(r.restart_iso)} in poi (${r.days_since_restart} giorni, ${identity.posts_in_current_phase} post). Lo storico pre-pausa (${r.pre_pause_post_count} post tra ${fmtDate(r.first_ever_iso)} e ${fmtDate(r.last_pre_pause_iso)}) è escluso dalle aggregazioni perché preceduto da una pausa di ${r.pause_days} giorni — di fatto un'altra fase del progetto.`
+    );
+  }
   L.push(
     `- Reach e accounts_engaged dei daily sono **somme giornaliere**, non valori unique-su-finestra (per quello servirebbe Graph API live). Per i tier IG viene usato benchmark micro-account (sotto 1k follower).`
   );
@@ -714,26 +793,43 @@ async function main() {
       await endRunLog(runId, { status: "error", error: msg });
       process.exit(1);
     }
+
+    // Restart detection: se c'e' stato un buco lungo, l'analisi che segue
+    // lavora SOLO su post + daily post-ripartenza. La vita pre-pausa diventa
+    // un fatto storico citato una volta nella sezione Identita, e basta.
+    const restart = detectRestart(posts);
+    const postsActive = restart
+      ? posts.filter((p) => p.timestamp >= restart.restart_iso)
+      : posts;
+    const dailyActive = restart
+      ? daily.filter((d) => d.date >= restart.restart_date_only)
+      : daily;
+    if (restart) {
+      console.log(
+        `Restart rilevato: pausa di ${restart.pause_days}g, ripartenza il ${restart.restart_date_only}. ` +
+          `Analisi limitata ai ${postsActive.length} post post-ripartenza (esclusi ${restart.pre_pause_post_count} pre-pausa).`
+      );
+    }
     console.log(
-      `Caricati: ${daily.length} daily · ${posts.length} post · audience ${audienceDate || "n/a"}`
+      `Caricati: ${dailyActive.length} daily · ${postsActive.length} post · audience ${audienceDate || "n/a"}`
     );
 
-    const identity = computeIdentity(daily, posts);
-    const cadence = computeCadence(posts);
-    const byType = computePerformanceByType(posts);
-    const followerTrend = computeFollowerTrend(daily);
-    const topBottom = topBottomPosts(posts, 5);
+    const identity = computeIdentity(dailyActive, postsActive, restart, posts.length);
+    const cadence = computeCadence(postsActive);
+    const byType = computePerformanceByType(postsActive);
+    const followerTrend = computeFollowerTrend(dailyActive);
+    const topBottom = topBottomPosts(postsActive, 5);
     const audSummary = audienceSummary(audience);
 
-    // Payload per LLM: tutto strutturato + caption tagliate a 600 char (per
-    // tema-clustering serve il testo, non solo gli ID).
+    // Payload per LLM: SOLO post post-ripartenza (se restart rilevato).
+    // La pausa precedente e' un fact-only nel campo identity.restart.
     const llmPayload = {
       identity,
       cadence,
       performance_by_type: byType,
       follower_trend: followerTrend,
       audience: { date: audienceDate, ...audSummary },
-      posts: posts.map((p) => ({
+      posts: postsActive.map((p) => ({
         id: p.postId,
         date: p.timestamp,
         type: p.mediaType,
@@ -783,7 +879,7 @@ async function main() {
       audience: audSummary,
       audienceDate,
       narrative,
-      posts,
+      posts: postsActive,
     });
 
     if (outputMode === "stdout") {

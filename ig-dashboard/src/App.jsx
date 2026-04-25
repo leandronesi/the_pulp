@@ -547,6 +547,50 @@ export default function App() {
         if (Object.keys(audienceOut).length > 0) setAudience(audienceOut);
         else setAudience(null);
 
+        // Stories live: lista attive + insights per ognuna. Le stories vivono
+        // 24h, /stories ritorna solo quelle non scadute. In live mode niente
+        // history (no DB) — solo l'ultimo snapshot per ognuna.
+        try {
+          const storyListUrl = `${API}/${igUserId}/stories?fields=id,media_type,media_url,thumbnail_url,permalink,timestamp&limit=50&access_token=${TOKEN}`;
+          const sj = await fetch(storyListUrl).then((r) => r.json());
+          const liveStories = sj.data || [];
+          if (liveStories.length === 0) {
+            setStories([]);
+          } else {
+            const enriched = await Promise.all(
+              liveStories.map(async (s) => {
+                try {
+                  const ij = await fetch(
+                    `${API}/${s.id}/insights?metric=reach,replies,navigation,shares,total_interactions&access_token=${TOKEN}`
+                  ).then((r) => r.json());
+                  const m = {
+                    reach: 0,
+                    replies: 0,
+                    navigation: 0,
+                    shares: 0,
+                    total_interactions: 0,
+                  };
+                  for (const item of ij.data || []) {
+                    if (m[item.name] === undefined) continue;
+                    const v =
+                      item.total_value?.value ??
+                      item.values?.[0]?.value ??
+                      0;
+                    m[item.name] = Number(v) || 0;
+                  }
+                  return { ...s, ...m };
+                } catch {
+                  return { ...s, reach: 0, replies: 0, navigation: 0, shares: 0, total_interactions: 0 };
+                }
+              })
+            );
+            setStories(enriched);
+          }
+          setStoryHistory({}); // no history in live mode
+        } catch {
+          setStories([]);
+        }
+
         setWarnings(warns);
       } catch (e) {
         setError(e.message);

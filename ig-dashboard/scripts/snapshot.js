@@ -41,6 +41,7 @@ const { token: TOKEN, pageId: PAGE_ID, api: API } = await loadCredentials();
 
 const FRESH_ONLY = process.argv.includes("--fresh-only");
 const FRESH_WINDOW_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Wrapper che cachea ig_user_id in tabella meta (seconda run in poi, 1 call in meno).
 async function resolveIgUserId(gql) {
@@ -56,7 +57,7 @@ async function resolveIgUserId(gql) {
 async function writePosts(db, posts, fetchedAt, { freshOnly }) {
   let toWrite = posts;
   if (freshOnly) {
-    const cutoff = Date.now() - FRESH_WINDOW_DAYS * DAY_SECONDS * 1000;
+    const cutoff = Date.now() - FRESH_WINDOW_DAYS * DAY_MS;
     toWrite = posts.filter((p) => new Date(p.timestamp).getTime() >= cutoff);
   }
   const statements = [];

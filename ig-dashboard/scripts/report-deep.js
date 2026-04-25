@@ -369,8 +369,12 @@ function computeFollowerTrend(daily) {
 function topBottomPosts(posts, n = 5) {
   const byReach = [...posts].sort((a, b) => b.reach - a.reach);
   const top = byReach.slice(0, n);
-  // Bottom: tra quelli con reach >= 50 per filtrare rumore (account piccolo)
-  const candidates = posts.filter((p) => p.reach >= 50);
+  const topIds = new Set(top.map((p) => p.postId));
+  // Bottom: filtro reach >= 50 per escludere rumore, ed escludo i top per
+  // evitare che un post con reach altissima ma ER basso compaia in entrambi.
+  const candidates = posts.filter(
+    (p) => p.reach >= 50 && !topIds.has(p.postId)
+  );
   const bottom = [...candidates].sort((a, b) => a.er - b.er).slice(0, n);
   return { top, bottom };
 }

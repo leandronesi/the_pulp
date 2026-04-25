@@ -66,6 +66,42 @@ const SCHEMA_STATEMENTS = [
     PRIMARY KEY (date, breakdown, key)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_audience_date ON audience_snapshot(date)`,
+  `CREATE TABLE IF NOT EXISTS story (
+    story_id TEXT PRIMARY KEY,
+    timestamp TEXT,
+    media_type TEXT,
+    permalink TEXT,
+    media_url TEXT,
+    thumbnail_url TEXT,
+    expires_at INTEGER,
+    first_seen INTEGER NOT NULL,
+    last_updated INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_story_timestamp ON story(timestamp)`,
+  // story_snapshot: navigation = totale aggregato di azioni di navigazione
+  // (uscite + avanti + indietro + prossima storia). IG non espone in modo
+  // affidabile il breakdown delle 4 sotto-metriche — usiamo l'aggregato.
+  // Le colonne taps_* / swipe_* / exits sono legacy: restano per DB che le
+  // hanno gia' (back-compat), nuovi DB le hanno ma non vengono popolate.
+  `CREATE TABLE IF NOT EXISTS story_snapshot (
+    story_id TEXT NOT NULL,
+    fetched_at INTEGER NOT NULL,
+    reach INTEGER,
+    replies INTEGER,
+    navigation INTEGER,
+    shares INTEGER,
+    total_interactions INTEGER,
+    taps_forward INTEGER,
+    taps_back INTEGER,
+    swipe_forward INTEGER,
+    exits INTEGER,
+    PRIMARY KEY (story_id, fetched_at)
+  )`,
+  // Migration in-place: aggiunge la colonna navigation se manca (per DB che
+  // hanno gia' la versione precedente dello schema). ALTER TABLE ADD COLUMN
+  // e' idempotente solo via try/catch — gestito a parte sotto.
+  `CREATE INDEX IF NOT EXISTS idx_story_snapshot_story ON story_snapshot(story_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_story_snapshot_time ON story_snapshot(fetched_at)`,
   `CREATE TABLE IF NOT EXISTS run_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at INTEGER NOT NULL,
@@ -103,6 +139,13 @@ export async function getDb() {
 
   for (const stmt of SCHEMA_STATEMENTS) {
     await _db.execute(stmt);
+  }
+  // Migration: aggiungi colonna `navigation` a story_snapshot se manca
+  // (DB pre-esistenti dal primo prototipo stories).
+  try {
+    await _db.execute(`ALTER TABLE story_snapshot ADD COLUMN navigation INTEGER`);
+  } catch {
+    /* colonna gia' esiste, ignora */
   }
   return _db;
 }

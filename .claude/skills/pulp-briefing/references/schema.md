@@ -71,6 +71,42 @@ Telemetria degli script. Utile per diagnosticare se un cron ha fallito.
 | `summary` | TEXT | JSON col payload |
 | `error` | TEXT | null se status ok |
 
+### `story`
+Metadata stabile per story. Le stories scadono dopo 24h da IG, ma noi le manteniamo nel DB indefinitamente per analisi storica. Upsert.
+
+| Colonna | Tipo | Note |
+|---|---|---|
+| `story_id` | TEXT PK | |
+| `timestamp` | TEXT | ISO 8601 UTC (publish time) |
+| `media_type` | TEXT | `IMAGE \| VIDEO` |
+| `permalink` | TEXT | dopo 24h restituisce 404 IG |
+| `media_url` | TEXT | URL firmato, scade ~1h |
+| `thumbnail_url` | TEXT | solo VIDEO |
+| `expires_at` | INTEGER | timestamp + 24h, ms |
+| `first_seen` / `last_updated` | INTEGER | ms |
+
+### `story_snapshot`
+Snapshot delle metriche di ogni story ad ogni cron 4h. Le stories vivono 24h, quindi tipicamente abbiamo 5-6 snapshot per story (curva di consumo). PK `(story_id, fetched_at)`.
+
+| Colonna | Tipo | Note |
+|---|---|---|
+| `story_id` | TEXT | FK |
+| `fetched_at` | INTEGER | ms |
+| `reach` | INTEGER | unique account che hanno visto |
+| `replies` | INTEGER | risposte (DM diretti via story-reply) |
+| `navigation` | INTEGER | totale azioni di navigazione (uscite + avanti + indietro + next-story) |
+| `shares` | INTEGER | condivisioni |
+| `total_interactions` | INTEGER | aggregato di replies+reactions+altre interazioni dirette |
+
+Indici: `idx_story_snapshot_story`, `idx_story_snapshot_time`.
+
+**KPI derivati per stories** (calcolati a runtime, non in DB):
+- **Completion rate** = `1 - exits/reach` — non disponibile direttamente perché Meta non espone `exits` separato in modo affidabile (è dentro `navigation`). Approssimazione possibile via `1 - navigation/(reach * N_frames)` su stories multi-frame, ma rumorosa.
+- **Reply rate** = `replies / reach × 100` — segnale forte di affinità (DM è high-effort).
+- **Navigation per reach** = `navigation / reach` — quanto interagiscono navigando dentro/fuori. Valori >1 = molti tap forward/back.
+
+Nota: le metriche `taps_forward`, `taps_back`, `swipe_forward`, `exits` separate sono colonne presenti nello schema per back-compat ma **non vengono popolate** — il breakdown `story_navigation_action_type` è instabile tra versioni Graph API e abbiamo scelto di salvare solo l'aggregato `navigation`.
+
 ### `meta`
 KV store per cache. Attualmente: `ig_user_id`.
 

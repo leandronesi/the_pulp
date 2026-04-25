@@ -100,14 +100,70 @@ async function fetchHistoryFromTurso(postIds) {
       interactions: Number(r.total_interactions) || 0,
     }));
 
+    // Stories ultimi 30gg: metadata + ultimo snapshot per ognuna +
+    // curva 24h (utile per visualizzare il decay nelle prime ore).
+    const STORIES_WINDOW_DAYS = 30;
+    const cutoffMs = Date.now() - STORIES_WINDOW_DAYS * 86400000;
+    const cutoffIso = new Date(cutoffMs).toISOString();
+    const storyRes = await db.execute({
+      sql: `SELECT story_id, timestamp, media_type, permalink, media_url,
+                   thumbnail_url, expires_at
+            FROM story
+            WHERE timestamp >= ?
+            ORDER BY timestamp DESC`,
+      args: [cutoffIso],
+    });
+    const stories = [];
+    const storyHistory = {};
+    if (storyRes.rows.length > 0) {
+      const ids = storyRes.rows.map((r) => r.story_id);
+      const ph = ids.map(() => "?").join(",");
+      const snapRes = await db.execute({
+        sql: `SELECT story_id, fetched_at, reach, replies, navigation,
+                     shares, total_interactions
+              FROM story_snapshot WHERE story_id IN (${ph})
+              ORDER BY fetched_at ASC`,
+        args: ids,
+      });
+      for (const r of snapRes.rows) {
+        if (!storyHistory[r.story_id]) storyHistory[r.story_id] = [];
+        storyHistory[r.story_id].push({
+          t: Number(r.fetched_at),
+          reach: Number(r.reach) || 0,
+          replies: Number(r.replies) || 0,
+          navigation: Number(r.navigation) || 0,
+          shares: Number(r.shares) || 0,
+          total_interactions: Number(r.total_interactions) || 0,
+        });
+      }
+      for (const r of storyRes.rows) {
+        const hist = storyHistory[r.story_id] || [];
+        const latest = hist[hist.length - 1] || {};
+        stories.push({
+          id: r.story_id,
+          timestamp: r.timestamp,
+          media_type: r.media_type,
+          permalink: r.permalink,
+          media_url: r.media_url,
+          thumbnail_url: r.thumbnail_url,
+          expires_at: Number(r.expires_at) || null,
+          reach: latest.reach || 0,
+          replies: latest.replies || 0,
+          navigation: latest.navigation || 0,
+          shares: latest.shares || 0,
+          total_interactions: latest.total_interactions || 0,
+        });
+      }
+    }
+
     console.log(
-      `[history] OK: ${Object.keys(postHistory).length} post con storico, ${followerTrend.length} giorni nel trend`
+      `[history] OK: ${Object.keys(postHistory).length} post con storico, ${followerTrend.length} giorni nel trend, ${stories.length} stories ultimi ${STORIES_WINDOW_DAYS}gg`
     );
-    return { postHistory, followerTrend };
+    return { postHistory, followerTrend, stories, storyHistory };
   } catch (e) {
     console.error(`[history] Turso fetch FALLITO: ${e.message} — continuo senza`);
     console.error(e.stack);
-    return { postHistory: {}, followerTrend: [] };
+    return { postHistory: {}, followerTrend: [], stories: [], storyHistory: {} };
   }
 }
 
@@ -207,9 +263,10 @@ async function main() {
     ranges[d] = await snapshotForRange(gql, igUserId, d);
   }
 
-  // Storico opzionale da Turso (post_snapshot + daily_snapshot)
+  // Storico opzionale da Turso (post_snapshot + daily_snapshot + stories)
   const postIds = posts.map((p) => p.id);
-  const { postHistory, followerTrend } = await fetchHistoryFromTurso(postIds);
+  const { postHistory, followerTrend, stories, storyHistory } =
+    await fetchHistoryFromTurso(postIds);
   const postAnalytics = derivePostAnalytics(posts, postHistory, profile);
 
   const payload = {
@@ -221,6 +278,8 @@ async function main() {
     postHistory,
     followerTrend,
     postAnalytics,
+    stories,
+    storyHistory,
   };
 
   writeFileSync(OUT_FILE, JSON.stringify(payload));

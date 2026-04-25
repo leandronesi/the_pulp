@@ -33,6 +33,8 @@ import {
   fetchDayTotals,
   fetchMedia,
   fetchAudience,
+  fetchStories,
+  fetchStoryInsights,
   rangeSinceUntil,
   metricOf,
 } from "./ig-fetch.js";
@@ -106,6 +108,79 @@ async function writePosts(db, posts, fetchedAt, { freshOnly }) {
   return toWrite.length;
 }
 
+// Stories: lista quelle attive (Meta le tiene 24h), per ognuna fetcha gli
+// insights e scrive story + story_snapshot. Idempotente sul story_id (upsert).
+// Errori per-story silenziosi: se Meta ne rifiuta una, le altre passano.
+async function writeStories(db, gql, igUserId, fetchedAt) {
+  const { stories, error } = await fetchStories(gql, igUserId);
+  if (error) return { fetched: 0, written: 0, error };
+  if (!stories.length) return { fetched: 0, written: 0, error: null };
+
+  // Insights in parallelo, max 8 alla volta per non sforare rate limit.
+  const concurrency = 8;
+  const enriched = [];
+  for (let i = 0; i < stories.length; i += concurrency) {
+    const batch = stories.slice(i, i + concurrency);
+    const results = await Promise.all(
+      batch.map(async (s) => {
+        try {
+          const insights = await fetchStoryInsights(gql, s.id);
+          return { story: s, insights, error: null };
+        } catch (e) {
+          return { story: s, insights: null, error: e.message };
+        }
+      })
+    );
+    enriched.push(...results);
+  }
+
+  const statements = [];
+  for (const { story, insights } of enriched) {
+    const expiresAt = story.timestamp
+      ? new Date(story.timestamp).getTime() + 24 * 60 * 60 * 1000
+      : null;
+    statements.push({
+      sql: `INSERT INTO story
+            (story_id, timestamp, media_type, permalink, media_url, thumbnail_url,
+             expires_at, first_seen, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(story_id) DO UPDATE SET
+              media_url = excluded.media_url,
+              thumbnail_url = excluded.thumbnail_url,
+              last_updated = excluded.last_updated`,
+      args: [
+        story.id,
+        story.timestamp ?? null,
+        story.media_type ?? null,
+        story.permalink ?? null,
+        story.media_url ?? null,
+        story.thumbnail_url ?? null,
+        expiresAt,
+        fetchedAt,
+        fetchedAt,
+      ],
+    });
+    if (insights) {
+      statements.push({
+        sql: `INSERT OR REPLACE INTO story_snapshot
+              (story_id, fetched_at, reach, replies, navigation, shares, total_interactions)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          story.id,
+          fetchedAt,
+          insights.reach,
+          insights.replies,
+          insights.navigation,
+          insights.shares,
+          insights.total_interactions,
+        ],
+      });
+    }
+  }
+  if (statements.length) await db.batch(statements, "write");
+  return { fetched: stories.length, written: enriched.length, error: null };
+}
+
 async function main() {
   if (isFakeToken(TOKEN)) {
     const msg =
@@ -140,8 +215,12 @@ async function main() {
     console.log(`IG User ID: ${igUserId}`);
 
     if (FRESH_ONLY) {
-      // ── Fresh mode: solo i post recenti, nient'altro ────────────
-      const { posts } = await fetchMedia(gql, igUserId, 30);
+      // ── Fresh mode: post recenti + stories attive (cron 4h cattura ─
+      // entrambi prima della scadenza 24h delle stories).
+      const [{ posts }, storiesResult] = await Promise.all([
+        fetchMedia(gql, igUserId, 30),
+        writeStories(db, gql, igUserId, fetchedAt),
+      ]);
       const written = await writePosts(db, posts, fetchedAt, {
         freshOnly: true,
       });
@@ -151,6 +230,9 @@ async function main() {
         window_days: FRESH_WINDOW_DAYS,
         posts_fetched: posts.length,
         posts_written: written,
+        stories_fetched: storiesResult.fetched,
+        stories_written: storiesResult.written,
+        stories_error: storiesResult.error,
       };
       console.log("OK snapshot:");
       console.log(JSON.stringify(summary, null, 2));
@@ -228,12 +310,19 @@ async function main() {
     }
     if (audStatements.length) await db.batch(audStatements, "write");
 
+    // 4. story + story_snapshot (best-effort: se Meta tira errore, log e via)
+    const storiesResult = await writeStories(db, gql, igUserId, fetchedAt);
+    if (storiesResult.error) {
+      fbErrors.push(`stories: ${storiesResult.error}`);
+    }
+
     const summary = {
       mode: "full",
       date,
       followers: profile.followers_count,
       posts_written: written,
       audience_rows: audStatements.length,
+      stories_written: storiesResult.written,
       metric_errors: fbErrors.length,
     };
     console.log("OK snapshot:");

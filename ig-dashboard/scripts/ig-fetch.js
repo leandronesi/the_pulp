@@ -206,6 +206,63 @@ export async function fetchAudience(gql, ig) {
 export const metricOf = (post, name) =>
   post.insights?.data?.find((x) => x.name === name)?.values?.[0]?.value ?? 0;
 
+// ─── Stories ─────────────────────────────────────────────────────────────
+// Le stories vivono 24h. Dopo la scadenza Meta tiene gli insights consultabili
+// fino a ~30gg, ma `/{ig}/stories` ritorna SOLO quelle attive (non scadute) —
+// quindi il cron 4h e' l'unica strada per catturarle in vita.
+
+const STORY_FIELDS =
+  "id,media_type,media_url,thumbnail_url,permalink,timestamp";
+
+// Metriche storia v21+. `navigation` con period=lifetime ritorna l'AGGREGATO
+// totale di azioni di navigazione (uscite+avanti+indietro+next-story), non un
+// breakdown — il breakdown delle 4 sotto-metriche e' instabile tra versioni
+// API. shares/total_interactions sono recenti: try/catch graceful.
+const STORY_METRICS_BASE = ["reach", "replies", "navigation"];
+const STORY_METRICS_EXTRA = ["shares", "total_interactions"];
+
+export async function fetchStories(gql, ig) {
+  try {
+    const j = await gql(`/${ig}/stories?fields=${STORY_FIELDS}&limit=50`);
+    return { stories: j.data || [], error: null };
+  } catch (e) {
+    return { stories: [], error: e.message };
+  }
+}
+
+// Ritorna { reach, replies, navigation, shares, total_interactions } per la
+// story. Valori non disponibili = null. Tenta prima base+extra, fallback alle
+// sole base se la versione API non supporta le extra.
+export async function fetchStoryInsights(gql, storyId) {
+  const out = {
+    reach: null,
+    replies: null,
+    navigation: null,
+    shares: null,
+    total_interactions: null,
+  };
+  const tryWithMetrics = async (metrics) => {
+    const j = await gql(`/${storyId}/insights?metric=${metrics.join(",")}`);
+    return j.data || [];
+  };
+  let data = [];
+  try {
+    data = await tryWithMetrics([...STORY_METRICS_BASE, ...STORY_METRICS_EXTRA]);
+  } catch {
+    try {
+      data = await tryWithMetrics(STORY_METRICS_BASE);
+    } catch {
+      return out; // story scaduta > 30gg o API rotta — null su tutto
+    }
+  }
+  for (const m of data) {
+    if (out[m.name] === undefined) continue;
+    const v = m.total_value?.value ?? m.values?.[0]?.value ?? null;
+    out[m.name] = v == null ? null : Number(v);
+  }
+  return out;
+}
+
 // Credenziali IG da env o da default config — usato da tutti gli script
 // per uniformità. Restituisce { token, pageId, api }.
 export async function loadCredentials() {

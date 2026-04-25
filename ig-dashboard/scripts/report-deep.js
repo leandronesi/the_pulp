@@ -87,7 +87,7 @@ function stddev(nums) {
 // ─── Data loaders (Turso) ─────────────────────────────────────────────────
 
 async function loadAll(db) {
-  const [dailyRes, postRes, snapRes, audDateRes] = await Promise.all([
+  const [dailyRes, postRes, snapRes, audDateRes, storyRes] = await Promise.all([
     db.execute(
       `SELECT date, fetched_at, followers_count, follows_count, media_count,
               reach, profile_views, website_clicks,
@@ -105,7 +105,38 @@ async function loadAll(db) {
        GROUP BY post_id`
     ),
     db.execute(`SELECT MAX(date) AS d FROM audience_snapshot`),
+    db.execute(
+      `SELECT story_id, timestamp, media_type, permalink
+       FROM story ORDER BY timestamp DESC`
+    ),
   ]);
+
+  // Latest snapshot per story (analoga a quella per post sotto).
+  const storyLatestRes = await db.execute(
+    `SELECT s.story_id, s.fetched_at, s.reach, s.replies, s.navigation,
+            s.shares, s.total_interactions
+     FROM story_snapshot s
+     INNER JOIN (
+       SELECT story_id, MAX(fetched_at) AS mx
+       FROM story_snapshot GROUP BY story_id
+     ) lst ON lst.story_id = s.story_id AND lst.mx = s.fetched_at`
+  );
+  const storyLatestById = {};
+  for (const r of storyLatestRes.rows) storyLatestById[r.story_id] = r;
+  const stories = storyRes.rows.map((r) => {
+    const s = storyLatestById[r.story_id] || {};
+    return {
+      storyId: r.story_id,
+      timestamp: r.timestamp,
+      mediaType: r.media_type,
+      permalink: r.permalink || "",
+      reach: num(s.reach),
+      replies: num(s.replies),
+      navigation: num(s.navigation),
+      shares: num(s.shares),
+      total_interactions: num(s.total_interactions),
+    };
+  });
 
   const audienceDate = audDateRes.rows[0]?.d || null;
   const audience = {};
@@ -172,6 +203,65 @@ async function loadAll(db) {
     posts,
     audience,
     audienceDate,
+    stories,
+  };
+}
+
+// Aggregati per le stories: count, reach medio, reply rate, navigation rate.
+// Le stories sono un canale di nurturing dell'audience esistente — non
+// strumento di crescita follower. KPI primario: reply rate (DM = high effort).
+function computeStoryStats(stories) {
+  if (!stories || !stories.length) return null;
+  const tot = stories.reduce(
+    (acc, s) => ({
+      reach: acc.reach + s.reach,
+      replies: acc.replies + s.replies,
+      navigation: acc.navigation + s.navigation,
+      shares: acc.shares + s.shares,
+      interactions: acc.interactions + s.total_interactions,
+    }),
+    { reach: 0, replies: 0, navigation: 0, shares: 0, interactions: 0 }
+  );
+  // Cadenza: storie/settimana sulla finestra coperta
+  const sorted = [...stories].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+  const spanDays =
+    sorted.length > 1
+      ? (new Date(sorted[sorted.length - 1].timestamp).getTime() -
+          new Date(sorted[0].timestamp).getTime()) /
+        86400000
+      : 1;
+  // Cadenza settimanale ha senso solo con span >= 3 giorni; sotto e' rumore
+  // (8 stories in 1 giorno → proiezione 56/sett, fuorviante).
+  const perWeek =
+    spanDays >= 3 ? (sorted.length / spanDays) * 7 : null;
+  // Top story per reach
+  const topStory = [...stories].sort((a, b) => b.reach - a.reach)[0] || null;
+  return {
+    count: stories.length,
+    span_days: +spanDays.toFixed(1),
+    stories_per_week_avg: perWeek != null ? +perWeek.toFixed(2) : null,
+    reach_total: tot.reach,
+    reach_avg: stories.length ? Math.round(tot.reach / stories.length) : 0,
+    replies_total: tot.replies,
+    reply_rate_pct:
+      tot.reach > 0 ? +((tot.replies / tot.reach) * 100).toFixed(2) : 0,
+    navigation_per_reach:
+      tot.reach > 0 ? +(tot.navigation / tot.reach).toFixed(2) : 0,
+    shares_total: tot.shares,
+    interactions_rate_pct:
+      tot.reach > 0 ? +((tot.interactions / tot.reach) * 100).toFixed(2) : 0,
+    top_story: topStory
+      ? {
+          id: topStory.storyId,
+          timestamp: topStory.timestamp,
+          media_type: topStory.mediaType,
+          reach: topStory.reach,
+          replies: topStory.replies,
+          navigation: topStory.navigation,
+        }
+      : null,
   };
 }
 
@@ -438,6 +528,8 @@ REGOLE:
    - La cadenza si valuta SOLO sui post della nuova fase. Se la nuova fase è di X giorni, calcola la frequenza vera del nuovo ritmo, non diluita dal passato.
    - Se identity.restart è null, ignora questa regola e tratta l'account come continuo nel tempo.
 
+8. **STORIES — canale di nurturing, non di crescita**: il payload contiene il campo "stories" con KPI aggregati. Le stories sono il canale per **mantenere caldo il pubblico esistente**, non per acquisire nuovi follower (per quello c'è il feed). Il KPI primario è il **reply rate** (DM via story-reply è high-effort, segnale di affinità reale). Anche il **navigation/reach** conta: valori bassi = pubblico passa veloce; valori alti = pubblico interagisce dentro la story. Per micro-account come The Pulp, **la regolarità delle stories conta più del reach assoluto**: pubblicarne 3-5 a settimana mantiene presenza nella head delle conversazioni. Se "stories" è null o "count": 0, il canale è inutilizzato — è un'opportunità mancata che merita di finire nelle verità scomode.
+
 Ritorna SOLO JSON valido con questa forma esatta:
 {
   "identityNarrative": "2-3 frasi sull'account: età, ritmo storico, fase attuale",
@@ -447,6 +539,7 @@ Ritorna SOLO JSON valido con questa forma esatta:
   "cadenceTake": "2-3 frasi sul ritmo di posting, costanza, gap critici",
   "audienceTake": "2-3 frasi su chi è l'audience demo + se matcha il contenuto",
   "performanceTake": "2-3 frasi su come stanno performando i format diversi, con chiarezza su cosa funziona davvero",
+  "storiesTake": "2-3 frasi sull'uso del canale stories: cadenza, reply rate vs aspettative micro-account, se il canale e' attivo o trascurato. null se stories.count == 0 o stories null.",
   "topPattern": "Cosa accomuna i top 5 post — pattern concreto, non generico",
   "bottomPattern": "Cosa accomuna i bottom 5 — diagnosi onesta",
   "followerCurveTake": "2-3 frasi sulla curva follower: trend, plateau, accelerate",
@@ -501,6 +594,7 @@ function renderReport({
   topBottom,
   audience,
   audienceDate,
+  storyStats,
   narrative,
   posts,
 }) {
@@ -656,12 +750,45 @@ function renderReport({
     L.push("");
   }
 
-  // 5. Performance — già implicita nei numeri sopra. Skip header dedicato,
+  // 5. Stories (canale di nurturing dell'audience esistente)
+  L.push("## 5. Stories — il canale del retain");
+  L.push("");
+  if (storyStats && storyStats.count > 0) {
+    const cadenceLabel =
+      storyStats.stories_per_week_avg != null
+        ? `media **${storyStats.stories_per_week_avg}/settimana**`
+        : `cadenza settimanale non significativa (solo ${storyStats.span_days}g coperti)`;
+    L.push(
+      `Catturate dal cron 4h durante le 24h di vita di ogni story (passata quella, IG le rimuove dalla lista). ${storyStats.count} stories in ${storyStats.span_days}g, ${cadenceLabel}.`
+    );
+    L.push("");
+    L.push(`- **Reach medio per story**: ${fmtN(storyStats.reach_avg)} (totale ${fmtN(storyStats.reach_total)})`);
+    L.push(`- **Reply rate**: ${pct(storyStats.reply_rate_pct)} (${storyStats.replies_total} risposte / ${fmtN(storyStats.reach_total)} reach) — il DM è high-effort, è il segnale di affinità più forte`);
+    L.push(`- **Navigation per reach**: ${storyStats.navigation_per_reach}× — azioni di tap-forward/back/exit per visione`);
+    L.push(`- **Total interactions rate**: ${pct(storyStats.interactions_rate_pct)}`);
+    if (storyStats.top_story) {
+      const t = storyStats.top_story;
+      L.push("");
+      L.push(`**Top story**: ${t.media_type} del ${fmtDateShort(t.timestamp)} — reach ${fmtN(t.reach)}, ${t.replies} replies, ${fmtN(t.navigation)} navigation`);
+    }
+    L.push("");
+    if (narrative?.storiesTake) {
+      L.push(narrative.storiesTake);
+      L.push("");
+    }
+  } else {
+    L.push(
+      "_Nessuna story tracciata nel periodo. Le stories sono il canale di nurturing per l'audience che ti segue già (vs il feed che cerca nuovi follower) — un account piccolo che le ignora rinuncia al tasto più diretto sulla community esistente._"
+    );
+    L.push("");
+  }
+
+  // 6. Performance — già implicita nei numeri sopra. Skip header dedicato,
   // unifichiamo in un take di sintesi.
   // (le metriche sono distribuite nelle sezioni 3 e 4)
 
-  // 6. Top 5
-  L.push("## 5. Top 5 post per reach");
+  // 7. Top 5
+  L.push("## 6. Top 5 post per reach");
   L.push("");
   L.push("| Data | Tipo | Reach | ER | Saved | Shares | Caption |");
   L.push("|---|---|---:|---:|---:|---:|---|");
@@ -678,7 +805,7 @@ function renderReport({
   }
 
   // 7. Bottom 5
-  L.push("## 6. Bottom 5 — sotto-performer");
+  L.push("## 7. Bottom 5 — sotto-performer");
   L.push("");
   if (topBottom.bottom.length) {
     L.push("_Filtrati su reach ≥ 50 per evitare rumore. Ordinati per ER ascendente._");
@@ -702,7 +829,7 @@ function renderReport({
   }
 
   // 8. Curva follower
-  L.push("## 7. Curva follower");
+  L.push("## 8. Curva follower");
   L.push("");
   if (followerTrend) {
     L.push(`- **Inizio storico**: ${fmtN(followerTrend.start_followers)} follower`);
@@ -727,7 +854,7 @@ function renderReport({
   }
 
   // 9. Verità scomode
-  L.push("## 8. Verità scomode");
+  L.push("## 9. Verità scomode");
   L.push("");
   if (narrative?.uncomfortableTruths?.length) {
     for (const t of narrative.uncomfortableTruths) {
@@ -741,7 +868,7 @@ function renderReport({
   }
 
   // 10. Strategia
-  L.push("## 9. Strategia 30 giorni");
+  L.push("## 10. Strategia 30 giorni");
   L.push("");
   if (narrative?.strategy?.length) {
     narrative.strategy.forEach((s, i) => {
@@ -790,7 +917,7 @@ async function main() {
 
   try {
     console.log("Caricamento dati da Turso...");
-    const { daily, posts, audience, audienceDate } = await loadAll(db);
+    const { daily, posts, audience, audienceDate, stories } = await loadAll(db);
     if (!daily.length || !posts.length) {
       const msg = "Storico vuoto: lancia 'npm run snapshot' qualche volta prima di generare il deep report.";
       console.error(msg);
@@ -799,8 +926,8 @@ async function main() {
     }
 
     // Restart detection: se c'e' stato un buco lungo, l'analisi che segue
-    // lavora SOLO su post + daily post-ripartenza. La vita pre-pausa diventa
-    // un fatto storico citato una volta nella sezione Identita, e basta.
+    // lavora SOLO su post + daily + stories post-ripartenza. La vita
+    // pre-pausa diventa un fatto storico citato una volta in Identita.
     const restart = detectRestart(posts);
     const postsActive = restart
       ? posts.filter((p) => p.timestamp >= restart.restart_iso)
@@ -808,6 +935,9 @@ async function main() {
     const dailyActive = restart
       ? daily.filter((d) => d.date >= restart.restart_date_only)
       : daily;
+    const storiesActive = restart
+      ? stories.filter((s) => s.timestamp >= restart.restart_iso)
+      : stories;
     if (restart) {
       console.log(
         `Restart rilevato: pausa di ${restart.pause_days}g, ripartenza il ${restart.restart_date_only}. ` +
@@ -824,6 +954,7 @@ async function main() {
     const followerTrend = computeFollowerTrend(dailyActive);
     const topBottom = topBottomPosts(postsActive, 5);
     const audSummary = audienceSummary(audience);
+    const storyStats = computeStoryStats(storiesActive);
 
     // Payload per LLM: SOLO post post-ripartenza (se restart rilevato).
     // La pausa precedente e' un fact-only nel campo identity.restart.
@@ -833,6 +964,7 @@ async function main() {
       performance_by_type: byType,
       follower_trend: followerTrend,
       audience: { date: audienceDate, ...audSummary },
+      stories: storyStats,
       posts: postsActive.map((p) => ({
         id: p.postId,
         date: p.timestamp,
@@ -882,6 +1014,7 @@ async function main() {
       topBottom,
       audience: audSummary,
       audienceDate,
+      storyStats,
       narrative,
       posts: postsActive,
     });

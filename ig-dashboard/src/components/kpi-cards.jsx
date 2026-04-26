@@ -1,5 +1,5 @@
 import React from "react";
-import { ResponsiveContainer, AreaChart, Area, YAxis } from "recharts";
+import { ResponsiveContainer, AreaChart, Area, YAxis, Tooltip } from "recharts";
 import { InfoTip } from "./tooltips.jsx";
 import { fmt } from "../utils/format.js";
 
@@ -11,13 +11,54 @@ import { fmt } from "../utils/format.js";
 // default Recharts <Area> usa baseValue=0, quindi su dati come follower
 // (474..476 su baseline 0) la curva sta tutta in alto e sembra una linea
 // piatta. Stretchando l'asse al range effettivo la variazione si vede.
-// Padding ±1 evita che max/min tocchino i bordi.
+//
+// Prop interactive (opt-in): mostra dot ai punti di variazione + tooltip
+// su hover (data + valore). Richiede che ogni punto abbia un campo `date`.
 // ---------------------------------------------------------------------------
-export function Sparkline({ data, height = 28 }) {
+
+function SparkTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload;
+  return (
+    <div
+      className="glass rounded-md px-2 py-1 text-[10px] mono-font text-white/85"
+      style={{ fontFamily: "JetBrains Mono" }}
+    >
+      <span className="text-white/50">{p.date || "—"}</span>
+      <span className="ml-2 font-semibold">{fmt(p.reach)}</span>
+    </div>
+  );
+}
+
+export function Sparkline({ data, height = 28, interactive = false }) {
   if (!data || data.length < 2) return null;
+
+  // Dot custom: renderizzato solo dove il valore cambia rispetto al
+  // precedente (e sempre sull'ultimo punto, cosi' "ora" si vede).
+  const renderDot = (props) => {
+    const { cx, cy, index } = props;
+    if (cx == null || cy == null) return null;
+    const cur = data[index]?.reach;
+    const prev = data[index - 1]?.reach;
+    const isLast = index === data.length - 1;
+    const changed = prev !== undefined && prev !== cur;
+    if (!changed && !isLast) return null;
+    return (
+      <circle
+        key={`spark-dot-${index}`}
+        cx={cx}
+        cy={cy}
+        r={2.5}
+        fill="#EDE5D0"
+        stroke="#0B3A30"
+        strokeWidth={1}
+      />
+    );
+  };
+
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <AreaChart data={data} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+      <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 2, left: 4 }}>
         <defs>
           <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#EDE5D0" stopOpacity={0.4} />
@@ -31,6 +72,12 @@ export function Sparkline({ data, height = 28 }) {
             (dataMax) => dataMax + Math.max(1, (dataMax || 0) * 0.005),
           ]}
         />
+        {interactive && (
+          <Tooltip
+            content={<SparkTooltip />}
+            cursor={{ stroke: "#EDE5D0", strokeOpacity: 0.2, strokeDasharray: "2 2" }}
+          />
+        )}
         <Area
           type="monotone"
           dataKey="reach"
@@ -39,6 +86,8 @@ export function Sparkline({ data, height = 28 }) {
           fill="url(#sparkGrad)"
           isAnimationActive={false}
           baseValue="dataMin"
+          dot={interactive ? renderDot : false}
+          activeDot={interactive ? { r: 3.5, fill: "#EDE5D0", stroke: "#0B3A30", strokeWidth: 1 } : false}
         />
       </AreaChart>
     </ResponsiveContainer>
@@ -166,7 +215,7 @@ export function KpiCard({ icon, label, value, accent, deltaPct, tier, tierLabel,
       </div>
       {sparkline && sparkline.length >= 2 && (
         <div className="mt-3 -mx-1">
-          <Sparkline data={sparkline} height={24} />
+          <Sparkline data={sparkline} height={28} interactive />
         </div>
       )}
     </div>

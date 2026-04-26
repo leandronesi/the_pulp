@@ -943,7 +943,10 @@ export default function App() {
                 label="Followers"
                 value={fmt(account.followers_count)}
                 sparkline={(() => {
-                  const base = followerTrend.map((d) => ({ reach: d.followers }));
+                  const base = followerTrend.map((d) => ({
+                    reach: d.followers,
+                    date: fmtDate(d.date),
+                  }));
                   const live = account.followers_count;
                   // Appendi il valore live in coda se differisce dall'ultimo
                   // daily (la curva chiude sul numero che vedi nel KPI).
@@ -952,7 +955,7 @@ export default function App() {
                     base.length > 0 &&
                     base[base.length - 1].reach !== live
                   ) {
-                    return [...base, { reach: live }];
+                    return [...base, { reach: live, date: "ora" }];
                   }
                   return base;
                 })()}

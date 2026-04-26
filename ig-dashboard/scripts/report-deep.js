@@ -664,14 +664,29 @@ function computeHourDowMatrix(posts) {
     }
   }
 
-  const best_slot = activeCells.length
-    ? activeCells.reduce((a, b) => (b.avg_reach > a.avg_reach ? b : a))
+  // best/worst: preferiamo celle con count >= 2 per evitare rumore da singoli post.
+  // Se nessuna ha count >= 2, usiamo tutto l'insieme e segnaliamo low_confidence.
+  const confidentCells = activeCells.filter((c) => c.count >= 2);
+  const poolForBestWorst = confidentCells.length > 0 ? confidentCells : activeCells;
+  const allLowConfidence = confidentCells.length === 0;
+
+  const best_slot = poolForBestWorst.length
+    ? {
+        ...poolForBestWorst.reduce((a, b) => (b.avg_reach > a.avg_reach ? b : a)),
+        low_confidence: allLowConfidence || poolForBestWorst.reduce((a, b) => (b.avg_reach > a.avg_reach ? b : a)).count < 3,
+      }
     : null;
-  const worst_slot = activeCells.length
-    ? activeCells.reduce((a, b) => (b.avg_reach < a.avg_reach ? b : a))
+  const worst_slot = poolForBestWorst.length
+    ? {
+        ...poolForBestWorst.reduce((a, b) => (b.avg_reach < a.avg_reach ? b : a)),
+        low_confidence: allLowConfidence || poolForBestWorst.reduce((a, b) => (b.avg_reach < a.avg_reach ? b : a)).count < 3,
+      }
     : null;
   const most_used_slot = activeCells.length
-    ? activeCells.reduce((a, b) => (b.count > a.count ? b : a))
+    ? {
+        ...activeCells.reduce((a, b) => (b.count > a.count ? b : a)),
+        low_confidence: activeCells.reduce((a, b) => (b.count > a.count ? b : a)).count < 3,
+      }
     : null;
 
   const unused_slots_count = 7 * 6 - activeCells.length;
@@ -680,9 +695,22 @@ function computeHourDowMatrix(posts) {
 }
 
 function computeCohortComparison(posts, windowSize = 5) {
-  if (posts.length < 2 * windowSize) return null;
+  // Filtriamo i post che hanno almeno 5 giorni di vita — i post recenti
+  // non hanno avuto tempo di accumulare reach (bias di età).
+  const matured = posts.filter(
+    (p) => (Date.now() - new Date(p.timestamp).getTime()) / 86400000 >= 5
+  );
+  const posts_excluded_too_recent = posts.length - matured.length;
 
-  const sorted = [...posts].sort(
+  if (matured.length < 2 * windowSize) {
+    return {
+      skipped: true,
+      reason: `Sample troppo piccolo: servono ${2 * windowSize} post di età ≥ 5g, ne abbiamo ${matured.length}.`,
+      posts_excluded_too_recent,
+    };
+  }
+
+  const sorted = [...matured].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
 
@@ -731,6 +759,7 @@ function computeCohortComparison(posts, windowSize = 5) {
     reach_delta_pct,
     er_delta_pct,
     trend,
+    posts_excluded_too_recent,
   };
 }
 
@@ -899,6 +928,44 @@ function computePulpIndex(identity, cadence, byType, followerTrend, contentDebt,
 
   const total = cadenceScore + varietyScore + engagementScore + growthScore + captionScore;
 
+  // --- Fase di vita (sostituisce il "grade scolastico") ---
+  // Per account piccoli e nuovi, "grade A+/F" è un framing sbagliato. Conta
+  // di piu' la fase: cosa ci si aspetta da una pagina di 50 giorni vs
+  // una di 2 anni. Determinata da follower attuali + età della fase.
+  const followers = identity.followers_now ?? 0;
+  const phaseDays = identity.restart
+    ? identity.restart.days_since_restart
+    : identity.first_active_post_date
+    ? Math.max(
+        1,
+        Math.floor(
+          (Date.now() - new Date(identity.first_active_post_date).getTime()) /
+            86400000
+        )
+      )
+    : 0;
+
+  let phase;
+  let phaseTake;
+  if (followers < 200 || phaseDays < 30) {
+    phase = "Embrionale";
+    phaseTake =
+      "Account in fase di nascita. Le metriche di performance contano poco — quello che conta è trovare la voce, capire di cosa parlare, costruire abitudine di pubblicazione. ER e reach assoluto sono volatili e non vanno presi come segnali.";
+  } else if (followers < 700 || phaseDays < 90) {
+    phase = "Lancio";
+    phaseTake =
+      "Account in lancio: hai cominciato a trovare un tono ma ancora non hai dati statisticamente significativi per ottimizzare. Priorità: consistency di pubblicazione, varietà di sperimentazione tematica, primi segnali di community (replies, salvataggi). Trend di reach/ER sono ancora rumore — non chiamare 'stallo' o 'peggioramento' nulla che abbia meno di 90 giorni di storico.";
+  } else if (followers < 2500 || phaseDays < 365) {
+    phase = "Consolidamento";
+    phaseTake =
+      "Account in consolidamento: hai un pubblico di nicchia, sai chi sei, ora puoi cominciare a ottimizzare. Trend e cohort cominciano a dire qualcosa di vero. Focus su content mix, affinamento format vincenti, attivazione community.";
+  } else {
+    phase = "Maturità";
+    phaseTake =
+      "Account maturo: i dati sono robusti, l'ottimizzazione marginale ha senso. Focus su scalabilità, monetizzazione, affinamento operativo.";
+  }
+
+  // Grade scolastico: utile per debug ma sussidiario alla fase
   let grade;
   if (total >= 90) grade = "A+";
   else if (total >= 80) grade = "A";
@@ -917,6 +984,10 @@ function computePulpIndex(identity, cadence, byType, followerTrend, contentDebt,
     growth: growthScore,
     caption_depth: captionScore,
     grade,
+    phase, // "Embrionale" | "Lancio" | "Consolidamento" | "Maturità"
+    phase_take: phaseTake,
+    phase_days: phaseDays,
+    followers_at_phase: followers,
   };
 }
 
@@ -930,7 +1001,7 @@ async function callLlm(payload) {
   const brandCtx = readSkillRef("brand-context.md");
   const benchmarks = readSkillRef("benchmarks.md");
 
-  const systemPrompt = `Sei un consulente strategy senior per micro-account Instagram (0-1k follower). Hai 15 anni di esperienza, hai lavorato con community editoriali, podcast, brand culturali. Sei pagato per dire la verità che i fondatori non vogliono sentire — non per essere accomodante o produrre liste di "ottimi spunti". Stai analizzando "The Pulp · Soave Sia il Vento", account community romano. ATTENZIONE: "Soave Sia il Vento" è una citazione da "Così fan tutte" di Mozart (augurio letterario), NON un riferimento al territorio veneto del vino Soave. Il vino può essere UN tema ma non è il cuore: il cuore è una community geo-locale romana di taglio editoriale-letterario.
+  const systemPrompt = `Sei un mentore di account Instagram in fase di lancio/nascita. Hai accompagnato decine di micro-creator dal giorno-zero ai primi 5k follower. Sai che per account < 1k follower e < 90 giorni di vita, il framing tradizionale ("performance", "ottimizzazione", "ROI") è SBAGLIATO — fa leggere come "stallo" cose che sono normali rumore di lancio. Sei pagato per dire la verità con il framing giusto per la fase. Stai analizzando "The Pulp · Soave Sia il Vento", account community romano. ATTENZIONE: "Soave Sia il Vento" è una citazione da "Così fan tutte" di Mozart (augurio letterario), NON riferimento al territorio veneto del vino Soave. Il vino può essere UN tema ma non è il cuore: il cuore è una community geo-locale romana editoriale-letteraria.
 
 === CONTESTO BRAND (autoritativo) ===
 ${brandCtx || "(brand-context.md non trovato)"}
@@ -941,26 +1012,37 @@ ${benchmarks || "(benchmarks.md non trovato)"}
 === TU SEI ===
 Pensa come una crasi tra: un consulente McKinsey (struttura), un editor culturale (sensibilità per il contenuto), un growth hacker pragmatico (sa cosa muove i numeri), un terapista (dice le cose che fanno male in modo che si possano accettare). NON sei un copywriter. NON sei un cheerleader. NON produci "spunti interessanti" — produci diagnosi e azioni testabili.
 
+REGOLA-MADRE — FASE DI VITA DELL'ACCOUNT:
+Prima di tutto, leggi payload.pulp_index.phase. Sono 4 fasi:
+- **Embrionale** (< 200 follower OPPURE < 30g di vita): le metriche di performance NON HANNO SENSO. Reach varia di 5-10x tra post simili per puro caso. ER 12% su un post con reach 50 è rumore (3 like). NON parlare di "stallo" o "degrading". Focus: trovare la voce, capire di cosa parlare, costruire abitudine. La tua diagnosi deve essere "hai ancora pochi dati", non "ecco cosa ottimizzare".
+- **Lancio** (200-700 follower E 30-90g): hai cominciato a trovare un tono ma sample troppo piccolo per ottimizzare. Cohort early-vs-late NON va letto come "miglioramento/peggioramento" — leggilo come "stiamo ancora capendo cosa risuona". Trend di reach/ER è ancora rumore. Focus diagnostico: c'è consistency? c'è varietà di sperimentazione? ci sono primi segnali di community (replies, salvataggi, DM)? hai già trovato 1-2 cluster tematici che si ripetono?
+- **Consolidamento** (700-2500 follower OPPURE 90-365g): qui i numeri cominciano a dire qualcosa di vero. Cohort, trend, hypothesis tests acquistano significato. Puoi parlare di ottimizzazione.
+- **Maturità** (> 2500 follower E > 365g): full performance lens.
+
+PER ACCOUNT in fase **Embrionale** o **Lancio** (è il caso più frequente di Pulp):
+- NON dichiarare "stallo follower" se follower_trend.span_days < 30. Hai 3 punti, non vedi nulla.
+- NON dichiarare "cohort in degrading" se cohortComparison.skipped è true (sample insufficiente). E anche se non skipped, in fase Lancio interpreta con prudenza: "i primi N post hanno avuto X giorni per accumulare reach, gli ultimi N pochi giorni — confronto indicativo, non conclusivo".
+- NON considerare best/worst slot dell'heatmap se .low_confidence è true (campione < 3). Se best_slot.count <= 4 di' "lo slot che usate di più sembra reggere ma il campione è ancora piccolo per chiamarlo *the* best slot".
+- Le verità scomode devono essere su pattern visibili E robusti (es. "85% caption senza CTA" è un dato robusto perché è un fatto editoriale, non statistico). NON su trend dedotti da pochi punti.
+
 PROCESSO MENTALE (segui questo flow prima di scrivere):
-1. Leggi il PULP INDEX (payload.pulp_index): è il punteggio di salute 0-100 con 5 sub-score (cadence, variety, engagement, growth, caption_depth) + grade A+ → F. Quale sub-score è il più basso? Quello è il punto di leva primario.
-2. Leggi CONTENT DEBT (payload.content_debt): % caption vuote/corte, % senza CTA, % senza mention, format_concentration. Sono i "debiti tecnici" del content.
-3. Leggi CAPTION FORENSICS (payload.caption_forensics): cta_rate_pct, question_rate_pct, hashtag_top10, mention_top10, lunghezza media. Cosa scrivono davvero?
-4. Leggi HOUR_DOW_MATRIX (payload.hour_dow_matrix): best_slot, worst_slot, most_used_slot. C'è un mismatch tra quando pubblicano e quando funziona meglio?
-5. Leggi COHORT (payload.cohort): early vs late. Trend "improving"/"stalling"/"degrading"? Questa è la diagnosi più importante della SALUTE.
-6. Leggi WEIGHTED_ENGAGEMENT (payload.weighted_engagement): top5/bottom5 per shares×4+saves×3+comments×2+likes×1. I "veri" vincitori (qualità del segnale, non quantità di click facili).
-7. Solo a questo punto formula executiveSummary, whatWorks/whatDoesnt/whatToTest, hypothesisTests, abTests, strategy.
+1. Leggi payload.pulp_index.phase + phase_take. Tutto quello che dirai dopo è filtrato dalla fase.
+2. Leggi PULP INDEX (sub-scores cadence/variety/engagement/growth/caption_depth). Quale sub-score è il più basso? Quello è il punto di leva primario, MA solo se il dato è interpretabile per la fase.
+3. Leggi CONTENT DEBT: questi sono fatti editoriali, sempre validi indipendentemente dalla fase.
+4. Leggi CAPTION FORENSICS: idem, fatti editoriali.
+5. Leggi HOUR_DOW_MATRIX MA controlla low_confidence. In fase Embrionale/Lancio quasi sempre è low_confidence.
+6. Leggi COHORT MA controlla skipped. Se skipped, dillo. Se non skipped ma fase Embrionale/Lancio, attribuiscilo come "indicativo, non conclusivo".
+7. Leggi WEIGHTED_ENGAGEMENT: top/bottom assoluti hanno senso anche in fase iniziale (è uno snapshot, non un trend).
+8. Solo a questo punto formula executive/whatWorks/etc.
 
 REGOLE DI SCRITTURA:
 1. **Italiano editoriale**, frasi medio-corte, trattini per ritmo, NO emoji, NO marketing-speak inglese.
-2. **Account piccolo & nuovo**: i tier IG generici NON si applicano. Per 0-1k follower: ER 5-15% normale, reach naturale <100% follower, **follower-growth è la metrica n.1**, costanza > picchi. Anche il REACH conta meno del trend.
-3. **Cita sempre post concreto** (caption reale, data, post_id) — mai "un contenuto recente". MAI inventare numeri non nel payload.
-4. **No genericità**. Frasi come "è importante essere costanti" o "il pubblico ama l'autenticità" sono spazzatura. Ogni frase deve essere SUPPORTATA da un dato del payload e ATTACCABILE.
-5. **Cita il post_id quando lo metti come prova** (sono lunghi ma necessari per audit del consiglio).
-6. **Cohort è il segnale primario di salute**: se "improving", celebra ma cerca cosa sta funzionando per replicarlo. Se "stalling/degrading", quello DEVE essere l'executiveSummary.
-7. **Topic clusters**: usa le caption complete in payload.posts.caption (fino a 600 char). Raggruppa per tema reale (manifesto/identità, eventi-pulp, civica/ambiente, racconto romano, dietro-le-quinte, citazione-letteraria, ecc). Per ogni cluster: tema + post_ids + share % del totale + take 2 righe.
-8. **Saturazione tematica**: se un cluster supera il 35% dei post, è un alert (mono-tematicità) → finire in whatDoesnt o uncomfortableTruths.
-9. **A/B test**: format ipotesi-variante-controllo-KPI-sample. Devono essere REALMENTE eseguibili in 30g (es. "alterna 4 caption-lunga vs 4 caption-corta sui prossimi 8 post di tipo immagine, KPI=ER medio, sample=4+4").
-10. **Strategy ≠ azioni vaghe**. Ogni azione deve avere una metrica osservabile entro 30g e una soglia esplicita di successo/fallimento.
+2. **Cita sempre post concreto** in formato POST_ID grezzo (sequenza di 15-20 cifre, es. 17949467211113600). Lo script post-processa il tuo output e sostituisce ogni POST_ID con il riferimento human-readable [data · type · «caption»]. NON scrivere già "il reel del 13/3" — scrivi solo l'ID, il sistema fa il resto. ESEMPIO CORRETTO: "Il post 17949467211113600 ha reach 2240". ESEMPIO SBAGLIATO: "Il reel del 13 marzo ha reach 2240".
+3. **No genericità**. Frasi come "è importante essere costanti" o "il pubblico ama l'autenticità" sono spazzatura. Ogni frase = un dato + un'interpretazione + un'azione (o una combinazione).
+4. **Topic clusters**: usa le caption complete in payload.posts.caption. Raggruppa per tema. Per ogni cluster: tema + post_ids + share_pct + take 2 righe.
+5. **Saturazione tematica**: se un cluster supera il 40% dei post in fase Embrionale (50% in fase Lancio), è un alert.
+6. **A/B test devono essere REALMENTE eseguibili** dato il volume di posting. In fase Lancio, con ~10 post/mese, un test A/B richiede 4+4 post per essere minimamente rispettabile e quindi 2 mesi. NON proporre A/B che richiedono 10+10 post in 30g per Pulp.
+7. **Strategy** in fase Lancio: priorità a (1) consistency di pubblicazione, (2) sperimentazione tematica, (3) attivazione community (DM, salvataggi, commenti) — NON "ottimizzazione formati". L'ottimizzazione viene dopo.
 
 REGOLA CRITICA RIPARTENZA: se identity.restart è non-null, l'account è "ripartito" il giorno restart_iso. NON menzionare la pausa pre-restart, NON menzionare "vuoto editoriale" o "buco di N giorni" nelle uncomfortableTruths o nel testo. L'account è una pagina nuova partita N giorni fa. La cadence/cohort/tutto è già filtrato.
 
@@ -968,7 +1050,7 @@ REGOLA CRITICA STORIES: stories è canale di NURTURING, non di growth. KPI prima
 
 Ritorna SOLO JSON valido con questa forma esatta:
 {
-  "executiveSummary": "30 secondi al CEO. 2-3 frasi tese, una tesi forte. Inizia dal Pulp Index e dal sub-score più basso. Es: 'Pulp Index 58/100 = C+. Il problema non è il contenuto, è che x.'",
+  "executiveSummary": "30 secondi al fondatore. 2-3 frasi tese, una tesi forte CALIBRATA SULLA FASE. Es per Lancio: 'Sei in fase Lancio (50g, 476 follower). Il dato che conta è che hai trovato 3 cluster tematici ricorrenti — ora serve consistency, non ottimizzazione.' NON aprire con un grade scolastico — apri con la fase e con la cosa chiave da sapere oggi.",
   "identityNarrative": "1-2 frasi sull'account: età, fase, ritmo attuale post-ripartenza se rilevante",
   "topicClusters": [
     {"theme": "string", "post_ids": ["..."], "share_pct": float, "avg_reach": int, "take": "string"}
@@ -978,7 +1060,7 @@ Ritorna SOLO JSON valido con questa forma esatta:
   "performanceTake": "2-3 frasi sui formati: cosa scala, cosa no, e perché",
   "audienceTake": "2-3 frasi su demo + match contenuto/audience",
   "storiesTake": "2-3 frasi sul canale stories. null se stories.count == 0",
-  "cohortTake": "2-3 frasi su early vs late: trend, su cosa basano la diagnosi 'improving/stalling/degrading'",
+  "cohortTake": "2-3 frasi su early vs late. ATTENZIONE: se cohort.skipped è true, di' che il sample è insufficiente — niente trend. Se non skipped ma fase Embrionale/Lancio, attribuiscilo come 'indicativo, non conclusivo' (i post recenti possono ancora accumulare reach). null se cohort è null o skipped.",
   "topPattern": "Cosa accomuna i top 5 weighted (qualità segnale alta) — pattern concreto",
   "bottomPattern": "Cosa accomuna i bottom 5 weighted — diagnosi onesta",
   "followerCurveTake": "2-3 frasi su curva follower",
@@ -1067,9 +1149,23 @@ function renderReport({
   weightedEngagement,
   contentDebt,
   pulpIndex,
+  postsLookup,
 }) {
   const L = [];
   const today = todayIsoDate();
+
+  // Sostituisce ogni sequenza di ≥15 cifre nel testo con una label leggibile
+  // del tipo "[13 mar · REELS · «prima parte caption…»]", ma solo se l'id
+  // è effettivamente nel postsLookup.
+  const humanize = (text) => {
+    if (!text || typeof text !== "string") return text;
+    return text.replace(/\b\d{15,20}\b/g, (id) => {
+      const p = postsLookup?.[id];
+      if (!p) return id;
+      const cap = (p.caption || "").slice(0, 50).replace(/\n+/g, " ").trim();
+      return `[${fmtDateShort(p.timestamp)} · ${p.mediaType}${cap ? ` · «${cap}…»` : ""}]`;
+    });
+  };
   const r = identity.restart;
 
   // ─── HEADER ─────────────────────────────────────────────────────────────
@@ -1095,7 +1191,15 @@ function renderReport({
   L.push("## Executive cockpit");
   L.push("");
   if (pulpIndex) {
-    L.push(`### Pulp Index: **${pulpIndex.total}/100 · grade ${pulpIndex.grade}**`);
+    L.push(
+      `### Fase: **${pulpIndex.phase}** _(${pulpIndex.followers_at_phase} follower · ${pulpIndex.phase_days}g di vita${identity.restart ? " dalla ripartenza" : ""})_`
+    );
+    L.push("");
+    L.push(`> ${pulpIndex.phase_take}`);
+    L.push("");
+    L.push(
+      `**Pulp Index** _(strumento di sub-diagnosi, sussidiario alla fase)_: **${pulpIndex.total}/100**`
+    );
     L.push("");
     L.push("| Dimensione | Score | Max | Note |");
     L.push("|---|---:|---:|---|");
@@ -1107,7 +1211,7 @@ function renderReport({
     L.push("");
   }
   if (narrative?.executiveSummary) {
-    L.push(`> ${narrative.executiveSummary}`);
+    L.push(`> ${humanize(narrative.executiveSummary)}`);
     L.push("");
   }
 
@@ -1122,24 +1226,24 @@ function renderReport({
     if (narrative.whatWorks?.length) {
       L.push("### Cosa funziona");
       for (const w of narrative.whatWorks) {
-        L.push(`- **${w.point}**`);
-        if (w.evidence) L.push(`  _${w.evidence}_`);
+        L.push(`- **${humanize(w.point)}**`);
+        if (w.evidence) L.push(`  _${humanize(w.evidence)}_`);
       }
       L.push("");
     }
     if (narrative.whatDoesnt?.length) {
       L.push("### Cosa NON funziona");
       for (const w of narrative.whatDoesnt) {
-        L.push(`- **${w.point}**`);
-        if (w.evidence) L.push(`  _${w.evidence}_`);
+        L.push(`- **${humanize(w.point)}**`);
+        if (w.evidence) L.push(`  _${humanize(w.evidence)}_`);
       }
       L.push("");
     }
     if (narrative.whatToTest?.length) {
       L.push("### Da testare");
       for (const w of narrative.whatToTest) {
-        L.push(`- **${w.point}**`);
-        if (w.rationale) L.push(`  _${w.rationale}_`);
+        L.push(`- **${humanize(w.point)}**`);
+        if (w.rationale) L.push(`  _${humanize(w.rationale)}_`);
       }
       L.push("");
     }
@@ -1174,7 +1278,7 @@ function renderReport({
   }
   L.push("");
   if (narrative?.identityNarrative) {
-    L.push(narrative.identityNarrative);
+    L.push(humanize(narrative.identityNarrative));
     L.push("");
   }
 
@@ -1188,7 +1292,7 @@ function renderReport({
         `### ${c.theme} · ${c.post_ids?.length || 0} post${sharePct} · reach medio ${fmtN(c.avg_reach)}`
       );
       L.push("");
-      if (c.take) L.push(c.take);
+      if (c.take) L.push(humanize(c.take));
       L.push("");
       if (c.post_ids?.length) {
         const refs = c.post_ids
@@ -1232,7 +1336,7 @@ function renderReport({
       L.push("");
     }
     if (narrative?.captionForensicsTake) {
-      L.push(narrative.captionForensicsTake);
+      L.push(humanize(narrative.captionForensicsTake));
       L.push("");
     }
   }
@@ -1278,18 +1382,24 @@ function renderReport({
     }
     L.push("");
     if (hourDowMatrix.best_slot) {
+      const bs = hourDowMatrix.best_slot;
+      const bsConf = bs.low_confidence ? ` _(campione fragile, solo ${bs.count} post)_` : "";
       L.push(
-        `- **Slot migliore**: ${hourDowMatrix.best_slot.dow} ${hourDowMatrix.best_slot.slot} → reach medio ${fmtN(hourDowMatrix.best_slot.avg_reach)} (${hourDowMatrix.best_slot.count} post)`
+        `- **Slot migliore**: ${bs.dow} ${bs.slot} → reach medio ${fmtN(bs.avg_reach)} (${bs.count} post)${bsConf}`
       );
     }
     if (hourDowMatrix.worst_slot) {
+      const ws = hourDowMatrix.worst_slot;
+      const wsConf = ws.low_confidence ? ` _(campione fragile, solo ${ws.count} post)_` : "";
       L.push(
-        `- **Slot peggiore**: ${hourDowMatrix.worst_slot.dow} ${hourDowMatrix.worst_slot.slot} → reach medio ${fmtN(hourDowMatrix.worst_slot.avg_reach)} (${hourDowMatrix.worst_slot.count} post)`
+        `- **Slot peggiore**: ${ws.dow} ${ws.slot} → reach medio ${fmtN(ws.avg_reach)} (${ws.count} post)${wsConf}`
       );
     }
     if (hourDowMatrix.most_used_slot) {
+      const mus = hourDowMatrix.most_used_slot;
+      const musConf = mus.low_confidence ? ` _(campione fragile, solo ${mus.count} post)_` : "";
       L.push(
-        `- **Slot più usato**: ${hourDowMatrix.most_used_slot.dow} ${hourDowMatrix.most_used_slot.slot} → ${hourDowMatrix.most_used_slot.count} post pubblicati`
+        `- **Slot più usato**: ${mus.dow} ${mus.slot} → ${mus.count} post pubblicati${musConf}`
       );
     }
     L.push("");
@@ -1297,11 +1407,11 @@ function renderReport({
     L.push("");
   }
   if (narrative?.cadenceTake) {
-    L.push(narrative.cadenceTake);
+    L.push(humanize(narrative.cadenceTake));
     L.push("");
   }
   if (narrative?.performanceTake) {
-    L.push(narrative.performanceTake);
+    L.push(humanize(narrative.performanceTake));
     L.push("");
   }
 
@@ -1330,7 +1440,7 @@ function renderReport({
     L.push("");
   }
   if (narrative?.audienceTake) {
-    L.push(narrative.audienceTake);
+    L.push(humanize(narrative.audienceTake));
     L.push("");
   }
 
@@ -1357,7 +1467,7 @@ function renderReport({
     }
     L.push("");
     if (narrative?.storiesTake) {
-      L.push(narrative.storiesTake);
+      L.push(humanize(narrative.storiesTake));
       L.push("");
     }
   } else {
@@ -1386,7 +1496,7 @@ function renderReport({
     L.push("");
   }
   if (narrative?.topPattern) {
-    L.push(`**Pattern dei vincenti**: ${narrative.topPattern}`);
+    L.push(`**Pattern dei vincenti**: ${humanize(narrative.topPattern)}`);
     L.push("");
   }
 
@@ -1406,7 +1516,7 @@ function renderReport({
     }
     L.push("");
     if (narrative?.bottomPattern) {
-      L.push(`**Pattern dei sotto-performer**: ${narrative.bottomPattern}`);
+      L.push(`**Pattern dei sotto-performer**: ${humanize(narrative.bottomPattern)}`);
       L.push("");
     }
   } else {
@@ -1415,15 +1525,24 @@ function renderReport({
   }
 
   // ─── 10. COHORT — early vs late ─────────────────────────────────────────
-  if (cohortComparison) {
-    L.push("## 10. Cohort: stai migliorando o stallando?");
+  L.push("## 10. Cohort: stai migliorando o stallando?");
+  L.push("");
+  if (cohortComparison?.skipped) {
+    L.push(`_${cohortComparison.reason}_`);
+    if (cohortComparison.posts_excluded_too_recent > 0) {
+      L.push(`_(${cohortComparison.posts_excluded_too_recent} post esclusi perché pubblicati da meno di 5 giorni)_`);
+    }
     L.push("");
+  } else if (cohortComparison) {
     const trendLabels = {
       improving: "🟢 IN MIGLIORAMENTO",
       stalling: "🟡 STALLO",
       degrading: "🔴 IN PEGGIORAMENTO",
     };
     L.push(`### Trend: **${trendLabels[cohortComparison.trend] || cohortComparison.trend}**`);
+    if (cohortComparison.posts_excluded_too_recent > 0) {
+      L.push(`_(${cohortComparison.posts_excluded_too_recent} post recenti esclusi dal confronto perché età < 5g)_`);
+    }
     L.push("");
     L.push("| Cohort | Post | Reach medio | ER medio | Saved | Shares |");
     L.push("|---|---:|---:|---:|---:|---:|");
@@ -1438,12 +1557,10 @@ function renderReport({
     );
     L.push("");
     if (narrative?.cohortTake) {
-      L.push(narrative.cohortTake);
+      L.push(humanize(narrative.cohortTake));
       L.push("");
     }
   } else {
-    L.push("## 10. Cohort: stai migliorando o stallando?");
-    L.push("");
     L.push("_Campione troppo piccolo per cohort comparison (servono ≥ 10 post nella fase corrente)._");
     L.push("");
   }
@@ -1469,7 +1586,7 @@ function renderReport({
   }
   L.push("");
   if (narrative?.followerCurveTake) {
-    L.push(narrative.followerCurveTake);
+    L.push(humanize(narrative.followerCurveTake));
     L.push("");
   }
 
@@ -1487,9 +1604,9 @@ function renderReport({
       };
       const icon = verdictColor[h.verdict] || "•";
       L.push(`### ${icon} ${h.verdict || "—"}`);
-      L.push(`**Ipotesi**: ${h.hypothesis}`);
-      if (h.verification) L.push(`**Verifica**: ${h.verification}`);
-      if (h.implication) L.push(`**Implicazione**: ${h.implication}`);
+      L.push(`**Ipotesi**: ${humanize(h.hypothesis)}`);
+      if (h.verification) L.push(`**Verifica**: ${humanize(h.verification)}`);
+      if (h.implication) L.push(`**Implicazione**: ${humanize(h.implication)}`);
       L.push("");
     }
   }
@@ -1499,8 +1616,8 @@ function renderReport({
   L.push("");
   if (narrative?.uncomfortableTruths?.length) {
     for (const t of narrative.uncomfortableTruths) {
-      L.push(`- **${t.point}**`);
-      if (t.evidence) L.push(`  _${t.evidence}_`);
+      L.push(`- **${humanize(t.point)}**`);
+      if (t.evidence) L.push(`  _${humanize(t.evidence)}_`);
     }
     L.push("");
   } else {
@@ -1530,9 +1647,9 @@ function renderReport({
   L.push("");
   if (narrative?.strategy?.length) {
     narrative.strategy.forEach((s, i) => {
-      L.push(`### ${i + 1}. ${s.action}`);
-      if (s.why) L.push(`**Perché**: ${s.why}`);
-      if (s.success_metric) L.push(`**Misura il successo con**: ${s.success_metric}`);
+      L.push(`### ${i + 1}. ${humanize(s.action)}`);
+      if (s.why) L.push(`**Perché**: ${humanize(s.why)}`);
+      if (s.success_metric) L.push(`**Misura il successo con**: ${humanize(s.success_metric)}`);
       L.push("");
     });
   } else {
@@ -1560,7 +1677,10 @@ function renderReport({
     `- Bottom 5 filtrati su reach ≥ 50 (no rumore) ed esclusi quelli già nei Top.`
   );
   L.push(
-    `- Pulp Index (cockpit) = score 0-100 composito su cadence (0-25) + variety (0-15) + engagement (0-25) + growth (0-20) + caption_depth (0-15). Grade A+ ≥90, A ≥80, B+ ≥70, B ≥60, C+ ≥50, C ≥40, D ≥30, F sotto.`
+    `- **Fase di vita** (cockpit) = framing primario. Embrionale: <200 follower o <30g. Lancio: 200-700 follower e 30-90g. Consolidamento: 700-2500 follower o 90-365g. Maturità: >2500 follower e >365g. Per Embrionale e Lancio i trend (cohort, follower curve) sono interpretati come *indicativi*, non conclusivi.`
+  );
+  L.push(
+    `- Pulp Index = strumento di sub-diagnosi (cadence 0-25 + variety 0-15 + engagement 0-25 + growth 0-20 + caption_depth 0-15). Sussidiario alla fase: il grade scolastico ha senso solo da Consolidamento in poi.`
   );
   L.push(
     `- Cohort early-vs-late confronta i primi 5 post post-ripartenza con gli ultimi 5. Trend "improving" se reach late ≥ +10% rispetto a early, "degrading" se ≤ -10%, sennò "stalling".`
@@ -1623,6 +1743,13 @@ async function main() {
         `Live: ${liveProfile.followers_count} follower (snapshot Turso ultimo: ${dailyActive[dailyActive.length - 1]?.followers ?? "n/a"})`
       );
     }
+
+    // postsLookup: dizionario post_id → {timestamp, mediaType, caption} su TUTTI
+    // i post (non solo postsActive) così la sostituzione funziona anche se il LLM
+    // cita per errore un post pre-restart.
+    const postsLookup = Object.fromEntries(
+      posts.map((p) => [p.postId, { timestamp: p.timestamp, mediaType: p.mediaType, caption: p.caption }])
+    );
 
     const identity = computeIdentity(dailyActive, postsActive, restart, posts.length, liveProfile);
     const cadence = computeCadence(postsActive);
@@ -1711,6 +1838,7 @@ async function main() {
       weightedEngagement,
       contentDebt,
       pulpIndex,
+      postsLookup,
     });
 
     if (outputMode === "stdout") {

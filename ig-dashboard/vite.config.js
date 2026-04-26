@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import chatPlugin from "./scripts/chat-plugin.js";
+import devDataPlugin from "./scripts/dev-data-plugin.js";
 
 // base si può override via env VITE_PUBLIC_PATH (es. "/the_pulp/" per GitHub Pages).
 // Default "/" ok per localhost e deploy a root.
@@ -13,7 +14,7 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    plugins: [react(), chatPlugin()],
+    plugins: [react(), chatPlugin(), devDataPlugin()],
     base: process.env.VITE_PUBLIC_PATH || "/",
     server: { port: 5180, open: true, strictPort: true },
   };

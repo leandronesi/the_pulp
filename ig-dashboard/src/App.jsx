@@ -503,9 +503,28 @@ export default function App() {
             );
             setStories(enriched);
           }
-          setStoryHistory({}); // no history in live mode
+          setStoryHistory({}); // sovrascritto subito sotto se /api/dev/history risponde
         } catch {
           setStories([]);
+        }
+
+        // Storico Turso via Vite middleware (dev-only). La Graph API non
+        // espone followerTrend ne' postHistory, quindi senza questo passo
+        // le sparkline KPI restano vuote.
+        try {
+          const histRes = await fetch("/api/dev/history");
+          if (histRes.ok) {
+            const hist = await histRes.json();
+            if (!hist.error) {
+              if (Array.isArray(hist.followerTrend)) setFollowerTrend(hist.followerTrend);
+              if (hist.postHistory && typeof hist.postHistory === "object") setPostHistory(hist.postHistory);
+              if (hist.storyHistory && typeof hist.storyHistory === "object") setStoryHistory(hist.storyHistory);
+            } else {
+              warns.push(`history dev: ${hist.error}`);
+            }
+          }
+        } catch {
+          // /api/dev/history non disponibile (e.g. build statico) — silent
         }
 
         setWarnings(warns);
@@ -918,7 +937,20 @@ export default function App() {
                 icon={<Users size={16} />}
                 label="Followers"
                 value={fmt(account.followers_count)}
-                sparkline={followerTrend.map((d) => ({ reach: d.followers }))}
+                sparkline={(() => {
+                  const base = followerTrend.map((d) => ({ reach: d.followers }));
+                  const live = account.followers_count;
+                  // Appendi il valore live in coda se differisce dall'ultimo
+                  // daily (la curva chiude sul numero che vedi nel KPI).
+                  if (
+                    live != null &&
+                    base.length > 0 &&
+                    base[base.length - 1].reach !== live
+                  ) {
+                    return [...base, { reach: live }];
+                  }
+                  return base;
+                })()}
                 accent="from-[#EDE5D0] to-[#D4A85C]"
                 info="Follower attuali. La piccola curva sotto mostra come il numero cambia giorno per giorno (serve ≥2 giorni di dati per apparire). La Graph API non dà lo storico: ce lo costruiamo noi."
               />

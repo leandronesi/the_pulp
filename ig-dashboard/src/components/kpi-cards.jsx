@@ -1,11 +1,17 @@
 import React from "react";
-import { ResponsiveContainer, AreaChart, Area } from "recharts";
+import { ResponsiveContainer, AreaChart, Area, YAxis } from "recharts";
 import { InfoTip } from "./tooltips.jsx";
 import { fmt } from "../utils/format.js";
 
 // ---------------------------------------------------------------------------
 // Sparkline — mini area chart. Usato qui da KpiCard, esportato perché PostCard
 // (in posts.jsx) lo riusa.
+//
+// YAxis hide + domain ["dataMin", "dataMax"] padding e' fondamentale: di
+// default Recharts <Area> usa baseValue=0, quindi su dati come follower
+// (474..476 su baseline 0) la curva sta tutta in alto e sembra una linea
+// piatta. Stretchando l'asse al range effettivo la variazione si vede.
+// Padding ±1 evita che max/min tocchino i bordi.
 // ---------------------------------------------------------------------------
 export function Sparkline({ data, height = 28 }) {
   if (!data || data.length < 2) return null;
@@ -18,6 +24,13 @@ export function Sparkline({ data, height = 28 }) {
             <stop offset="100%" stopColor="#EDE5D0" stopOpacity={0} />
           </linearGradient>
         </defs>
+        <YAxis
+          hide
+          domain={[
+            (dataMin) => dataMin - Math.max(1, (dataMin || 0) * 0.005),
+            (dataMax) => dataMax + Math.max(1, (dataMax || 0) * 0.005),
+          ]}
+        />
         <Area
           type="monotone"
           dataKey="reach"
@@ -25,6 +38,7 @@ export function Sparkline({ data, height = 28 }) {
           strokeWidth={1.5}
           fill="url(#sparkGrad)"
           isAnimationActive={false}
+          baseValue="dataMin"
         />
       </AreaChart>
     </ResponsiveContainer>

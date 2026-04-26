@@ -519,6 +519,11 @@ export default function App() {
               if (Array.isArray(hist.followerTrend)) setFollowerTrend(hist.followerTrend);
               if (hist.postHistory && typeof hist.postHistory === "object") setPostHistory(hist.postHistory);
               if (hist.storyHistory && typeof hist.storyHistory === "object") setStoryHistory(hist.storyHistory);
+              // Sovrascrivi la lista stories con l'archivio Turso (Graph API
+              // live ritorna solo le attive < 24h; Turso ha tutto lo storico).
+              if (Array.isArray(hist.stories) && hist.stories.length > 0) {
+                setStories(hist.stories);
+              }
             } else {
               warns.push(`history dev: ${hist.error}`);
             }

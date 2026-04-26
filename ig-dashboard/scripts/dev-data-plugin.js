@@ -26,7 +26,7 @@ async function buildHistory() {
   if (!client) {
     return { error: "TURSO_DATABASE_URL non settata in .env" };
   }
-  const [dailyRes, postSnapRes, storyRes, storySnapRes] = await Promise.all([
+  const [dailyRes, postSnapRes, storyMetaRes, storySnapRes] = await Promise.all([
     client.execute(
       `SELECT date, followers_count, follows_count, media_count,
               reach, profile_views, website_clicks,
@@ -39,7 +39,8 @@ async function buildHistory() {
        FROM post_snapshot ORDER BY fetched_at ASC`
     ),
     client.execute(
-      `SELECT story_id, timestamp, media_type, permalink, expires_at
+      `SELECT story_id, timestamp, media_type, permalink, media_url,
+              thumbnail_url, expires_at
        FROM story
        WHERE timestamp >= date('now', '-30 days')
        ORDER BY timestamp DESC`
@@ -92,7 +93,28 @@ async function buildHistory() {
     });
   }
 
-  return { followerTrend, postHistory, storyHistory };
+  // Lista stories: ultimo snapshot per ognuna (Graph API in dev mode da' solo
+  // le attive < 24h, qui restituiamo l'archivio completo per la tab Stories).
+  const stories = storyMetaRes.rows.map((r) => {
+    const hist = storyHistory[r.story_id] || [];
+    const latest = hist[hist.length - 1] || {};
+    return {
+      id: r.story_id,
+      timestamp: r.timestamp,
+      media_type: r.media_type,
+      permalink: r.permalink,
+      media_url: r.media_url,
+      thumbnail_url: r.thumbnail_url,
+      expires_at: Number(r.expires_at) || null,
+      reach: latest.reach || 0,
+      replies: latest.replies || 0,
+      navigation: latest.navigation || 0,
+      shares: latest.shares || 0,
+      total_interactions: latest.total_interactions || 0,
+    };
+  });
+
+  return { followerTrend, postHistory, storyHistory, stories };
 }
 
 export default function devDataPlugin() {

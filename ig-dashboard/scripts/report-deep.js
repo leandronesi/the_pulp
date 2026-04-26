@@ -19,8 +19,31 @@
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { getDb, todayIsoDate, startRunLog, endRunLog } from "./db.js";
+import { getDb, todayIsoDate, startRunLog, endRunLog, getMeta } from "./db.js";
 import { resolveMediaType } from "../src/analytics.js";
+import {
+  createGql,
+  loadCredentials,
+  resolveIgUserId,
+  fetchProfile,
+} from "./ig-fetch.js";
+
+// Live profile fetch — IG Graph API e' la fonte di verita' per i valori
+// "ora" (follower / following / media_count). Lo snapshot Turso ha quello
+// catturato dal cron mattutino e puo' essere off di qualche unita'.
+async function fetchLiveProfile() {
+  try {
+    const { token, pageId, api } = await loadCredentials();
+    if (!token || !pageId) return null;
+    const gql = createGql({ token, api });
+    const cached = await getMeta("ig_user_id");
+    const igUserId = cached || (await resolveIgUserId(gql, pageId));
+    return await fetchProfile(gql, igUserId);
+  } catch (e) {
+    console.warn(`[live profile] skip: ${e.message}`);
+    return null;
+  }
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPORTS_DIR = resolve(__dirname, "..", "..", "reports");
@@ -316,13 +339,25 @@ function detectRestart(posts) {
 
 // ─── Pre-compute (i numeri che il LLM userà come fatti) ──────────────────
 
-function computeIdentity(daily, postsActive, restart, postsTotalEver) {
+function computeIdentity(daily, postsActive, restart, postsTotalEver, liveProfile) {
   const lastDaily = daily[daily.length - 1];
   const firstDailyActive = daily[0];
+  // Live wins: il numero "ora" viene da Graph API; lo snapshot Turso e' del
+  // cron mattutino e puo' essere off di qualche unita' (es. snapshot 475,
+  // live 476 = +1 nel pomeriggio non ancora catturato).
+  const followersNow = liveProfile?.followers_count ?? lastDaily?.followers ?? null;
+  const followsNow = liveProfile?.follows_count ?? lastDaily?.follows ?? null;
+  const mediaCountNow = liveProfile?.media_count ?? lastDaily?.media_count ?? null;
+  const followersDriftFromSnapshot =
+    liveProfile?.followers_count != null && lastDaily?.followers != null
+      ? liveProfile.followers_count - lastDaily.followers
+      : 0;
   return {
-    followers_now: lastDaily?.followers ?? null,
-    follows_now: lastDaily?.follows ?? null,
-    media_count_now: lastDaily?.media_count ?? null,
+    followers_now: followersNow,
+    follows_now: followsNow,
+    media_count_now: mediaCountNow,
+    followers_snapshot_value: lastDaily?.followers ?? null,
+    followers_drift_from_snapshot: followersDriftFromSnapshot,
     first_active_post_date: postsActive.length
       ? postsActive[postsActive.length - 1].timestamp // DESC ordering
       : null,
@@ -491,6 +526,400 @@ function audienceSummary(audience) {
   };
 }
 
+// ─── Pre-compute esteso ───────────────────────────────────────────────────
+
+function computeCaptionForensics(posts) {
+  const CTA_WORDS = [
+    "scrivi", "racconta", "rispondi", "dimmi", "commenta", "tagga",
+    "salva", "condividi", "fammi sapere",
+  ];
+  const hasCta = (cap) => {
+    const lower = cap.toLowerCase();
+    if (CTA_WORDS.some((w) => lower.includes(w))) return true;
+    // ?! consecutivi (qualsiasi ordine)
+    if (/[?!][!?]/.test(cap)) return true;
+    return false;
+  };
+
+  const total = posts.length;
+  let count_empty = 0;
+  let count_short = 0;
+  let count_with_question = 0;
+  let count_with_cta = 0;
+  let count_with_mention = 0;
+  let count_with_hashtag = 0;
+  const lengths = [];
+  const hashtagCounts = {};
+  const mentionCounts = {};
+
+  for (const p of posts) {
+    const cap = p.caption || "";
+    const trimmed = cap.trim();
+
+    if (!trimmed) {
+      count_empty += 1;
+      continue; // vuota — non conta per avg_length, short, ecc.
+    }
+
+    const len = trimmed.length;
+    lengths.push(len);
+
+    if (len < 30) count_short += 1;
+    if (cap.includes("?")) count_with_question += 1;
+    if (hasCta(cap)) count_with_cta += 1;
+    if (/@\w/.test(cap)) count_with_mention += 1;
+    if (/#\w/.test(cap)) count_with_hashtag += 1;
+
+    // Estrai hashtag
+    const tags = cap.match(/#[\wÀ-ɏ]+/gi) || [];
+    for (const t of tags) {
+      const k = t.toLowerCase();
+      hashtagCounts[k] = (hashtagCounts[k] || 0) + 1;
+    }
+    // Estrai menzioni
+    const mentions = cap.match(/@[\w.]+/gi) || [];
+    for (const m of mentions) {
+      const k = m.toLowerCase();
+      mentionCounts[k] = (mentionCounts[k] || 0) + 1;
+    }
+  }
+
+  const avg_length = lengths.length
+    ? Math.round(lengths.reduce((a, b) => a + b, 0) / lengths.length)
+    : 0;
+  const med_length = Math.round(median(lengths));
+
+  const hashtag_top10 = Object.entries(hashtagCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([tag, count]) => ({ tag, count }));
+
+  const mention_top10 = Object.entries(mentionCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([handle, count]) => ({ handle, count }));
+
+  return {
+    count_total: total,
+    count_empty,
+    count_short,
+    count_with_question,
+    count_with_cta,
+    count_with_mention,
+    count_with_hashtag,
+    avg_length,
+    median_length: med_length,
+    hashtag_top10,
+    mention_top10,
+    cta_rate_pct: total > 0 ? +((count_with_cta / total) * 100).toFixed(2) : 0,
+    question_rate_pct: total > 0 ? +((count_with_question / total) * 100).toFixed(2) : 0,
+  };
+}
+
+function computeHourDowMatrix(posts) {
+  const DOW_LABELS = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"];
+  // 0=Dom, 1=Lun…6=Sab in getUTCDay(); mappiamo a Lun=0..Dom=6
+  const toLocalDow = (utcDay) => (utcDay === 0 ? 6 : utcDay - 1);
+  const SLOTS = ["00-04", "04-08", "08-12", "12-16", "16-20", "20-24"];
+  const toSlotIdx = (h) => Math.min(Math.floor(h / 4), 5);
+
+  // Inizializza matrice 7×6
+  const cells = Array.from({ length: 7 }, () =>
+    Array.from({ length: 6 }, () => ({ count: 0, reach_sum: 0 }))
+  );
+
+  for (const p of posts) {
+    const d = new Date(p.timestamp);
+    const dow = toLocalDow(d.getUTCDay());
+    const slot = toSlotIdx(d.getUTCHours());
+    cells[dow][slot].count += 1;
+    cells[dow][slot].reach_sum += p.reach;
+  }
+
+  const matrix = DOW_LABELS.map((dow, di) => ({
+    dow,
+    buckets: SLOTS.map((slot, si) => {
+      const c = cells[di][si];
+      return {
+        slot,
+        count: c.count,
+        avg_reach: c.count > 0 ? Math.round(c.reach_sum / c.count) : 0,
+      };
+    }),
+  }));
+
+  // Flat list di celle con count >= 1 per best/worst
+  const activeCells = [];
+  for (let di = 0; di < 7; di++) {
+    for (let si = 0; si < 6; si++) {
+      const c = cells[di][si];
+      if (c.count >= 1) {
+        activeCells.push({
+          dow: DOW_LABELS[di],
+          slot: SLOTS[si],
+          count: c.count,
+          avg_reach: Math.round(c.reach_sum / c.count),
+        });
+      }
+    }
+  }
+
+  const best_slot = activeCells.length
+    ? activeCells.reduce((a, b) => (b.avg_reach > a.avg_reach ? b : a))
+    : null;
+  const worst_slot = activeCells.length
+    ? activeCells.reduce((a, b) => (b.avg_reach < a.avg_reach ? b : a))
+    : null;
+  const most_used_slot = activeCells.length
+    ? activeCells.reduce((a, b) => (b.count > a.count ? b : a))
+    : null;
+
+  const unused_slots_count = 7 * 6 - activeCells.length;
+
+  return { matrix, best_slot, worst_slot, most_used_slot, unused_slots_count };
+}
+
+function computeCohortComparison(posts, windowSize = 5) {
+  if (posts.length < 2 * windowSize) return null;
+
+  const sorted = [...posts].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+
+  const avg = (arr, key) =>
+    arr.length ? arr.reduce((s, p) => s + (p[key] || 0), 0) / arr.length : 0;
+
+  const early = sorted.slice(0, windowSize);
+  const late = sorted.slice(-windowSize);
+
+  const earlyReach = avg(early, "reach");
+  const lateReach = avg(late, "reach");
+  const reach_delta_pct =
+    earlyReach > 0 ? +((lateReach - earlyReach) / earlyReach * 100).toFixed(2) : 0;
+
+  const earlyEr = avg(early, "er");
+  const lateEr = avg(late, "er");
+  const er_delta_pct =
+    earlyEr > 0 ? +((lateEr - earlyEr) / earlyEr * 100).toFixed(2) : 0;
+
+  const trend =
+    reach_delta_pct > 10 ? "improving" : reach_delta_pct < -10 ? "degrading" : "stalling";
+
+  const periodLabel = (group) => {
+    const first = group[0].timestamp.slice(0, 10);
+    const last = group[group.length - 1].timestamp.slice(0, 10);
+    return first === last ? first : `${first} → ${last}`;
+  };
+
+  return {
+    early: {
+      count: early.length,
+      avg_reach: +earlyReach.toFixed(1),
+      avg_er: +earlyEr.toFixed(2),
+      avg_saved: +avg(early, "saved").toFixed(2),
+      avg_shares: +avg(early, "shares").toFixed(2),
+      period_label: periodLabel(early),
+    },
+    late: {
+      count: late.length,
+      avg_reach: +lateReach.toFixed(1),
+      avg_er: +lateEr.toFixed(2),
+      avg_saved: +avg(late, "saved").toFixed(2),
+      avg_shares: +avg(late, "shares").toFixed(2),
+      period_label: periodLabel(late),
+    },
+    reach_delta_pct,
+    er_delta_pct,
+    trend,
+  };
+}
+
+function computeWeightedEngagement(posts) {
+  const score = (p) => p.shares * 4 + p.saved * 3 + p.comments * 2 + p.like * 1;
+
+  const enriched = posts.map((p) => {
+    const ws = score(p);
+    return {
+      ...p,
+      weighted_score: ws,
+      weighted_score_per_reach: p.reach > 0 ? +((ws / p.reach) * 100).toFixed(4) : 0,
+    };
+  });
+
+  const sortedByWs = [...enriched].sort((a, b) => b.weighted_score - a.weighted_score);
+
+  const fmt = (p) => ({
+    post_id: p.postId,
+    timestamp: p.timestamp,
+    media_type: p.mediaType,
+    caption_preview: (p.caption || "").slice(0, 160),
+    weighted_score: p.weighted_score,
+    weighted_score_per_reach: p.weighted_score_per_reach,
+    reach: p.reach,
+  });
+
+  const top5_by_weighted = sortedByWs.slice(0, 5).map(fmt);
+
+  // Bottom 5: solo post con reach >= 50
+  const candidates = enriched.filter((p) => p.reach >= 50);
+  const bottom5_by_weighted = [...candidates]
+    .sort((a, b) => a.weighted_score - b.weighted_score)
+    .slice(0, 5)
+    .map(fmt);
+
+  const wsPerReachValues = enriched
+    .filter((p) => p.reach > 0)
+    .map((p) => p.weighted_score_per_reach);
+
+  const avg_weighted_per_reach = wsPerReachValues.length
+    ? +(wsPerReachValues.reduce((a, b) => a + b, 0) / wsPerReachValues.length).toFixed(4)
+    : 0;
+  const median_weighted_per_reach = +median(wsPerReachValues).toFixed(4);
+
+  return {
+    top5_by_weighted,
+    bottom5_by_weighted,
+    avg_weighted_per_reach,
+    median_weighted_per_reach,
+  };
+}
+
+function computeContentDebt(posts) {
+  const total = posts.length;
+  if (!total) {
+    return {
+      empty_caption_pct: 0,
+      short_caption_pct: 0,
+      no_cta_pct: 0,
+      no_mention_no_collab_pct: 0,
+      format_concentration: { top_type: null, top_type_pct: 0 },
+      longest_dry_streak_days: 0,
+    };
+  }
+
+  const CTA_WORDS = [
+    "scrivi", "racconta", "rispondi", "dimmi", "commenta", "tagga",
+    "salva", "condividi", "fammi sapere",
+  ];
+  const hasCta = (cap) => {
+    const lower = cap.toLowerCase();
+    if (CTA_WORDS.some((w) => lower.includes(w))) return true;
+    if (/[?!][!?]/.test(cap)) return true;
+    return false;
+  };
+
+  let empty = 0;
+  let short = 0;
+  let no_cta = 0;
+  let no_mention = 0;
+  const typeCounts = {};
+
+  for (const p of posts) {
+    const cap = (p.caption || "").trim();
+    if (!cap) empty += 1;
+    else if (cap.length < 30) short += 1;
+    if (!hasCta(p.caption || "")) no_cta += 1;
+    if (!/@\w/.test(p.caption || "")) no_mention += 1;
+    typeCounts[p.mediaType] = (typeCounts[p.mediaType] || 0) + 1;
+  }
+
+  // Format concentration
+  const topEntry = Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0];
+  const top_type = topEntry ? topEntry[0] : null;
+  const top_type_pct = topEntry ? +((topEntry[1] / total) * 100).toFixed(1) : 0;
+
+  // Longest dry streak: giorni dall'ultimo post (cioè la pausa più recente)
+  const sorted = [...posts].sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
+  const longest_dry_streak_days = sorted.length
+    ? Math.floor((Date.now() - new Date(sorted[0].timestamp).getTime()) / 86400000)
+    : 0;
+
+  return {
+    empty_caption_pct: +((empty / total) * 100).toFixed(2),
+    short_caption_pct: +((short / total) * 100).toFixed(2),
+    no_cta_pct: +((no_cta / total) * 100).toFixed(2),
+    no_mention_no_collab_pct: +((no_mention / total) * 100).toFixed(2),
+    format_concentration: { top_type, top_type_pct },
+    longest_dry_streak_days,
+  };
+}
+
+function computePulpIndex(identity, cadence, byType, followerTrend, contentDebt, captionForensics) {
+  // --- Cadenza score (0-25) ---
+  const ppw = cadence.posts_per_week_avg ?? 0;
+  let cadenceScore;
+  if (ppw >= 3.5) {
+    cadenceScore = 25;
+  } else if (ppw <= 0.5) {
+    cadenceScore = 0;
+  } else {
+    // lineare da 0.5→0 a 3.5→25
+    cadenceScore = Math.round(((ppw - 0.5) / (3.5 - 0.5)) * 25);
+  }
+
+  // --- Variety score (0-15) ---
+  const uniqueTypes = new Set((byType || []).map((t) => t.type)).size;
+  const varietyScore = uniqueTypes >= 3 ? 15 : uniqueTypes === 2 ? 10 : 5;
+
+  // --- Engagement score (0-25) ---
+  // basato su ER medio dei top 5 type (già ordinati per avg_reach desc)
+  const topTypes = (byType || []).slice(0, 5);
+  const avgEr = topTypes.length
+    ? topTypes.reduce((s, t) => s + t.avg_er, 0) / topTypes.length
+    : 0;
+  let engagementScore;
+  if (avgEr >= 6) engagementScore = 25;
+  else if (avgEr >= 3) engagementScore = 18;
+  else if (avgEr >= 1) engagementScore = 10;
+  else engagementScore = 0;
+
+  // --- Growth score (0-20) ---
+  const last7 = followerTrend?.last7_delta ?? 0;
+  let growthScore;
+  if (last7 >= 5) growthScore = 20;
+  else if (last7 >= 1) growthScore = 12;
+  else if (last7 === 0) growthScore = 5;
+  else growthScore = 0;
+
+  // --- Caption depth score (0-15) ---
+  const ctaRate = captionForensics?.cta_rate_pct ?? 0;
+  const emptyPct = contentDebt?.empty_caption_pct ?? 0;
+  let captionScore;
+  if (ctaRate >= 40 && emptyPct < 5) {
+    captionScore = 15;
+  } else if (ctaRate >= 25 && emptyPct < 15) {
+    captionScore = 10;
+  } else if (ctaRate >= 10 && emptyPct < 30) {
+    captionScore = 5;
+  } else {
+    captionScore = 0;
+  }
+
+  const total = cadenceScore + varietyScore + engagementScore + growthScore + captionScore;
+
+  let grade;
+  if (total >= 90) grade = "A+";
+  else if (total >= 80) grade = "A";
+  else if (total >= 70) grade = "B+";
+  else if (total >= 60) grade = "B";
+  else if (total >= 50) grade = "C+";
+  else if (total >= 40) grade = "C";
+  else if (total >= 30) grade = "D";
+  else grade = "F";
+
+  return {
+    total,
+    cadence: cadenceScore,
+    variety: varietyScore,
+    engagement: engagementScore,
+    growth: growthScore,
+    caption_depth: captionScore,
+    grade,
+  };
+}
+
 // ─── LLM (OpenAI) ─────────────────────────────────────────────────────────
 
 async function callLlm(payload) {
@@ -501,7 +930,7 @@ async function callLlm(payload) {
   const brandCtx = readSkillRef("brand-context.md");
   const benchmarks = readSkillRef("benchmarks.md");
 
-  const systemPrompt = `Sei un data analyst senior specializzato in account Instagram di micro-creator (sotto i 1.000 follower). Stai analizzando "The Pulp · Soave Sia il Vento", account community romano (NON territoriale veneto: "Soave Sia il Vento" è una citazione mozartiana — augurio letterario, non riferimento al territorio del Soave veneto). Il vino del Soave è UNO dei temi possibili (cantine, degustazione), insieme a podcast/incontri/cultura editoriale, ma il cuore è una community geo-localizzata su Roma.
+  const systemPrompt = `Sei un consulente strategy senior per micro-account Instagram (0-1k follower). Hai 15 anni di esperienza, hai lavorato con community editoriali, podcast, brand culturali. Sei pagato per dire la verità che i fondatori non vogliono sentire — non per essere accomodante o produrre liste di "ottimi spunti". Stai analizzando "The Pulp · Soave Sia il Vento", account community romano. ATTENZIONE: "Soave Sia il Vento" è una citazione da "Così fan tutte" di Mozart (augurio letterario), NON un riferimento al territorio veneto del vino Soave. Il vino può essere UN tema ma non è il cuore: il cuore è una community geo-locale romana di taglio editoriale-letterario.
 
 === CONTESTO BRAND (autoritativo) ===
 ${brandCtx || "(brand-context.md non trovato)"}
@@ -509,47 +938,82 @@ ${brandCtx || "(brand-context.md non trovato)"}
 === BENCHMARK ===
 ${benchmarks || "(benchmarks.md non trovato)"}
 
-=== RUOLO ===
-Il tuo lavoro NON è essere accomodante. Sei pagato per dire la verità: trovare i pattern negativi, indicare cosa non sta funzionando, suggerire scelte controintuitive se i dati le supportano. Hai diritto e dovere di essere diretto.
+=== TU SEI ===
+Pensa come una crasi tra: un consulente McKinsey (struttura), un editor culturale (sensibilità per il contenuto), un growth hacker pragmatico (sa cosa muove i numeri), un terapista (dice le cose che fanno male in modo che si possano accettare). NON sei un copywriter. NON sei un cheerleader. NON produci "spunti interessanti" — produci diagnosi e azioni testabili.
 
-REGOLE:
-1. **Italiano editoriale**, frasi medio-corte, trattini per ritmo, NO emoji, NO marketing-speak inglese ("engagement", "performance" usali in italiano se servono).
-2. **Account piccolo & nuovo**: i benchmark IG generici (3-6% ER = good) NON si applicano. Per micro-account 0-1k follower: ER tipico 5-15%, reach naturale <100% follower, follower-growth la metrica n.1. Per il reach la cosa che conta è il **trend** non il valore assoluto.
-3. **Cita sempre il post concreto** (caption reale, data) — mai "un contenuto recente". Mai inventare numeri non presenti nei dati.
-4. **Verità scomode obbligatorie**: cerca attivamente almeno 4 pattern negativi. Esempi di cosa cercare: stallo follower nonostante reach buona, format trascurato (es. zero reel da X giorni), caption troppo brevi/lunghe, mono-tematicità, gap di posting recenti, mancanza di chiamate all'azione, audience che non matcha il contenuto.
-5. **Topic clusters**: leggi le caption complete, raggruppa per tema reale (vino, paesaggio, persone, eventi, cucina, racconto storico, ecc). Ogni cluster: tema + post_ids che ci appartengono + take 1-2 righe sul perché funziona o no.
-6. **Strategia**: 3-5 azioni con format {action, why, success_metric}. Ogni azione deve essere fattibile in 30 giorni e misurabile (es. "pubblica 4 reel sotto i 30 secondi nel mese, target ER medio > 8%" non "fai più reel").
+PROCESSO MENTALE (segui questo flow prima di scrivere):
+1. Leggi il PULP INDEX (payload.pulp_index): è il punteggio di salute 0-100 con 5 sub-score (cadence, variety, engagement, growth, caption_depth) + grade A+ → F. Quale sub-score è il più basso? Quello è il punto di leva primario.
+2. Leggi CONTENT DEBT (payload.content_debt): % caption vuote/corte, % senza CTA, % senza mention, format_concentration. Sono i "debiti tecnici" del content.
+3. Leggi CAPTION FORENSICS (payload.caption_forensics): cta_rate_pct, question_rate_pct, hashtag_top10, mention_top10, lunghezza media. Cosa scrivono davvero?
+4. Leggi HOUR_DOW_MATRIX (payload.hour_dow_matrix): best_slot, worst_slot, most_used_slot. C'è un mismatch tra quando pubblicano e quando funziona meglio?
+5. Leggi COHORT (payload.cohort): early vs late. Trend "improving"/"stalling"/"degrading"? Questa è la diagnosi più importante della SALUTE.
+6. Leggi WEIGHTED_ENGAGEMENT (payload.weighted_engagement): top5/bottom5 per shares×4+saves×3+comments×2+likes×1. I "veri" vincitori (qualità del segnale, non quantità di click facili).
+7. Solo a questo punto formula executiveSummary, whatWorks/whatDoesnt/whatToTest, hypothesisTests, abTests, strategy.
 
-7. **TRATTAMENTO DELLA RIPARTENZA — REGOLA CRITICA**: se nel payload identity.restart è presente (non null), significa che l'account ha avuto una pausa lunga e poi è ripartito. **Da quel momento in poi, l'account va trattato come una pagina nuova nata il giorno della ripartenza** (identity.restart.restart_iso). Tutti i post nel payload, le metriche, i top/bottom, la cadenza, la curva follower fanno già riferimento SOLO alla fase post-ripartenza — il filtro è già stato applicato lato dati, tu lavori solo sul "nuovo".
+REGOLE DI SCRITTURA:
+1. **Italiano editoriale**, frasi medio-corte, trattini per ritmo, NO emoji, NO marketing-speak inglese.
+2. **Account piccolo & nuovo**: i tier IG generici NON si applicano. Per 0-1k follower: ER 5-15% normale, reach naturale <100% follower, **follower-growth è la metrica n.1**, costanza > picchi. Anche il REACH conta meno del trend.
+3. **Cita sempre post concreto** (caption reale, data, post_id) — mai "un contenuto recente". MAI inventare numeri non nel payload.
+4. **No genericità**. Frasi come "è importante essere costanti" o "il pubblico ama l'autenticità" sono spazzatura. Ogni frase deve essere SUPPORTATA da un dato del payload e ATTACCABILE.
+5. **Cita il post_id quando lo metti come prova** (sono lunghi ma necessari per audit del consiglio).
+6. **Cohort è il segnale primario di salute**: se "improving", celebra ma cerca cosa sta funzionando per replicarlo. Se "stalling/degrading", quello DEVE essere l'executiveSummary.
+7. **Topic clusters**: usa le caption complete in payload.posts.caption (fino a 600 char). Raggruppa per tema reale (manifesto/identità, eventi-pulp, civica/ambiente, racconto romano, dietro-le-quinte, citazione-letteraria, ecc). Per ogni cluster: tema + post_ids + share % del totale + take 2 righe.
+8. **Saturazione tematica**: se un cluster supera il 35% dei post, è un alert (mono-tematicità) → finire in whatDoesnt o uncomfortableTruths.
+9. **A/B test**: format ipotesi-variante-controllo-KPI-sample. Devono essere REALMENTE eseguibili in 30g (es. "alterna 4 caption-lunga vs 4 caption-corta sui prossimi 8 post di tipo immagine, KPI=ER medio, sample=4+4").
+10. **Strategy ≠ azioni vaghe**. Ogni azione deve avere una metrica osservabile entro 30g e una soglia esplicita di successo/fallimento.
 
-   Implicazioni:
-   - L'identityNarrative deve presentare l'account come "ripartito X giorni fa", "nella sua nuova fase iniziata a [data]", "in fase di lancio". Niente discorsi su "378 giorni" o "11 aprile 2025" — quello era un'altra vita.
-   - Le verità scomode NON devono mai citare la pausa, il "vuoto editoriale", il "buco di N giorni", "ritmo storico", o equivalenti. La pausa è acqua passata, non un argomento. Concentrati su ciò che sta succedendo da quando è ripartito.
-   - La cadenza si valuta SOLO sui post della nuova fase. Se la nuova fase è di X giorni, calcola la frequenza vera del nuovo ritmo, non diluita dal passato.
-   - Se identity.restart è null, ignora questa regola e tratta l'account come continuo nel tempo.
+REGOLA CRITICA RIPARTENZA: se identity.restart è non-null, l'account è "ripartito" il giorno restart_iso. NON menzionare la pausa pre-restart, NON menzionare "vuoto editoriale" o "buco di N giorni" nelle uncomfortableTruths o nel testo. L'account è una pagina nuova partita N giorni fa. La cadence/cohort/tutto è già filtrato.
 
-8. **STORIES — canale di nurturing, non di crescita**: il payload contiene il campo "stories" con KPI aggregati. Le stories sono il canale per **mantenere caldo il pubblico esistente**, non per acquisire nuovi follower (per quello c'è il feed). Il KPI primario è il **reply rate** (DM via story-reply è high-effort, segnale di affinità reale). Anche il **navigation/reach** conta: valori bassi = pubblico passa veloce; valori alti = pubblico interagisce dentro la story. Per micro-account come The Pulp, **la regolarità delle stories conta più del reach assoluto**: pubblicarne 3-5 a settimana mantiene presenza nella head delle conversazioni. Se "stories" è null o "count": 0, il canale è inutilizzato — è un'opportunità mancata che merita di finire nelle verità scomode.
+REGOLA CRITICA STORIES: stories è canale di NURTURING, non di growth. KPI primario = reply_rate. Per micro-account, REGOLARITÀ > volume di reach. Se stories.count == 0 → opportunità mancata da finire in whatDoesnt + uncomfortableTruths + strategy.
 
 Ritorna SOLO JSON valido con questa forma esatta:
 {
-  "identityNarrative": "2-3 frasi sull'account: età, ritmo storico, fase attuale",
+  "executiveSummary": "30 secondi al CEO. 2-3 frasi tese, una tesi forte. Inizia dal Pulp Index e dal sub-score più basso. Es: 'Pulp Index 58/100 = C+. Il problema non è il contenuto, è che x.'",
+  "identityNarrative": "1-2 frasi sull'account: età, fase, ritmo attuale post-ripartenza se rilevante",
   "topicClusters": [
-    {"theme": "string", "post_ids": ["..."], "avg_reach": int, "take": "string"}
+    {"theme": "string", "post_ids": ["..."], "share_pct": float, "avg_reach": int, "take": "string"}
   ],
-  "cadenceTake": "2-3 frasi sul ritmo di posting, costanza, gap critici",
-  "audienceTake": "2-3 frasi su chi è l'audience demo + se matcha il contenuto",
-  "performanceTake": "2-3 frasi su come stanno performando i format diversi, con chiarezza su cosa funziona davvero",
-  "storiesTake": "2-3 frasi sull'uso del canale stories: cadenza, reply rate vs aspettative micro-account, se il canale e' attivo o trascurato. null se stories.count == 0 o stories null.",
-  "topPattern": "Cosa accomuna i top 5 post — pattern concreto, non generico",
-  "bottomPattern": "Cosa accomuna i bottom 5 — diagnosi onesta",
-  "followerCurveTake": "2-3 frasi sulla curva follower: trend, plateau, accelerate",
+  "captionForensicsTake": "2-3 frasi su come scrivono davvero: lunghezza, CTA, hashtag, mention. Cosa cambierebbe se scrivessero diverso?",
+  "cadenceTake": "2-3 frasi sul ritmo + heatmap take: best slot, worst slot, mismatch tra quando posti e quando funziona",
+  "performanceTake": "2-3 frasi sui formati: cosa scala, cosa no, e perché",
+  "audienceTake": "2-3 frasi su demo + match contenuto/audience",
+  "storiesTake": "2-3 frasi sul canale stories. null se stories.count == 0",
+  "cohortTake": "2-3 frasi su early vs late: trend, su cosa basano la diagnosi 'improving/stalling/degrading'",
+  "topPattern": "Cosa accomuna i top 5 weighted (qualità segnale alta) — pattern concreto",
+  "bottomPattern": "Cosa accomuna i bottom 5 weighted — diagnosi onesta",
+  "followerCurveTake": "2-3 frasi su curva follower",
+  "whatWorks": [
+    {"point": "cosa sta funzionando (azione/format/tema)", "evidence": "dato/post che lo prova"}
+  ],
+  "whatDoesnt": [
+    {"point": "cosa NON sta funzionando", "evidence": "dato/post che lo prova"}
+  ],
+  "whatToTest": [
+    {"point": "cosa testare nei prossimi 30g (cosa diversa da what works/doesn't, è una scommessa)", "rationale": "perché vale la pena testarlo"}
+  ],
   "uncomfortableTruths": [
-    {"point": "affermazione forte e specifica", "evidence": "numero/post che la prova"}
+    {"point": "verità scomoda specifica e attaccabile", "evidence": "dato/post che la prova"}
+  ],
+  "hypothesisTests": [
+    {"hypothesis": "ipotesi specifica e cadibile", "verification": "calcolo/confronto fatto sul payload", "verdict": "CONFERMATA | RESPINTA | DATI INSUFFICIENTI", "implication": "cosa ne consegue"}
+  ],
+  "abTests": [
+    {"name": "nome breve", "hypothesis": "se faccio X, succede Y", "variant": "trattamento (cosa cambia)", "control": "baseline (cosa NON cambia)", "primary_kpi": "metrica (es. ER medio, save_rate, follower delta)", "sample": "quanti post/stories servono per ogni gruppo (min 3 per gruppo)", "duration_days": int}
   ],
   "strategy": [
-    {"action": "azione concreta misurabile", "why": "evidenza che la motiva", "success_metric": "indicatore osservabile in 30g"}
+    {"action": "azione concreta misurabile", "why": "evidenza", "success_metric": "soglia osservabile in 30g (es. 'ER medio > 6% sui prossimi 8 post' non 'ER migliore')"}
   ]
-}`;
+}
+
+REGOLE DI QUANTITÀ:
+- whatWorks: 2-4 punti
+- whatDoesnt: 3-5 punti
+- whatToTest: 2-4 punti
+- uncomfortableTruths: 4-5 punti
+- hypothesisTests: 3-5 ipotesi
+- abTests: 2-3 esperimenti REALMENTE eseguibili
+- strategy: 3-5 azioni
+- topicClusters: 4-6 cluster (no più, no meno)`;
 
   const userPrompt = `Ecco il dump completo dei dati. Analizza tutto e ritorna il JSON come da specifica:
 
@@ -597,17 +1061,24 @@ function renderReport({
   storyStats,
   narrative,
   posts,
+  captionForensics,
+  hourDowMatrix,
+  cohortComparison,
+  weightedEngagement,
+  contentDebt,
+  pulpIndex,
 }) {
   const L = [];
   const today = todayIsoDate();
   const r = identity.restart;
+
+  // ─── HEADER ─────────────────────────────────────────────────────────────
   L.push(`# The Pulp · Fotografia analitica · ${fmtDate(today)}`);
   L.push("");
   if (r) {
     L.push(
       `_Account ripartito il **${fmtDate(r.restart_iso)}** dopo una pausa di ${r.pause_days} giorni. ` +
-        `Questa fotografia analizza **solo** la nuova fase (${r.days_since_restart} giorni, ${identity.posts_in_current_phase} post). ` +
-        `La vita pre-pausa è citata come fatto storico nella sezione Identità e basta._`
+        `Questa fotografia analizza **solo** la nuova fase (${r.days_since_restart} giorni, ${identity.posts_in_current_phase} post). La vita pre-pausa è citata una volta come fatto storico, poi sparisce._`
     );
   } else {
     L.push(
@@ -620,17 +1091,74 @@ function renderReport({
   L.push("---");
   L.push("");
 
-  // 1. Identità
-  L.push("## 1. Identità");
+  // ─── 0. EXECUTIVE COCKPIT ──────────────────────────────────────────────
+  L.push("## Executive cockpit");
   L.push("");
-  L.push(`- **Follower attuali**: ${fmtN(identity.followers_now)}`);
+  if (pulpIndex) {
+    L.push(`### Pulp Index: **${pulpIndex.total}/100 · grade ${pulpIndex.grade}**`);
+    L.push("");
+    L.push("| Dimensione | Score | Max | Note |");
+    L.push("|---|---:|---:|---|");
+    L.push(`| Cadenza editoriale | ${pulpIndex.cadence} | 25 | ${cadence.posts_per_week_avg ?? "—"} post/sett |`);
+    L.push(`| Varietà format | ${pulpIndex.variety} | 15 | ${byType.length} tipi usati |`);
+    L.push(`| Engagement | ${pulpIndex.engagement} | 25 | ER ponderato per format |`);
+    L.push(`| Growth follower | ${pulpIndex.growth} | 20 | ${followerTrend?.last7_delta >= 0 ? "+" : ""}${followerTrend?.last7_delta ?? 0} ultimi 7g |`);
+    L.push(`| Profondità caption | ${pulpIndex.caption_depth} | 15 | ${pct(captionForensics?.cta_rate_pct)} con CTA |`);
+    L.push("");
+  }
+  if (narrative?.executiveSummary) {
+    L.push(`> ${narrative.executiveSummary}`);
+    L.push("");
+  }
+
+  // ─── 1. COSA FUNZIONA / COSA NO / DA TESTARE ──────────────────────────
+  if (
+    narrative?.whatWorks?.length ||
+    narrative?.whatDoesnt?.length ||
+    narrative?.whatToTest?.length
+  ) {
+    L.push("## 1. Cosa funziona / Cosa no / Da testare");
+    L.push("");
+    if (narrative.whatWorks?.length) {
+      L.push("### Cosa funziona");
+      for (const w of narrative.whatWorks) {
+        L.push(`- **${w.point}**`);
+        if (w.evidence) L.push(`  _${w.evidence}_`);
+      }
+      L.push("");
+    }
+    if (narrative.whatDoesnt?.length) {
+      L.push("### Cosa NON funziona");
+      for (const w of narrative.whatDoesnt) {
+        L.push(`- **${w.point}**`);
+        if (w.evidence) L.push(`  _${w.evidence}_`);
+      }
+      L.push("");
+    }
+    if (narrative.whatToTest?.length) {
+      L.push("### Da testare");
+      for (const w of narrative.whatToTest) {
+        L.push(`- **${w.point}**`);
+        if (w.rationale) L.push(`  _${w.rationale}_`);
+      }
+      L.push("");
+    }
+  }
+
+  // ─── 2. IDENTITÀ (compressa) ──────────────────────────────────────────
+  L.push("## 2. Identità");
+  L.push("");
+  if (identity.followers_drift_from_snapshot && identity.followers_drift_from_snapshot !== 0) {
+    L.push(
+      `- **Follower attuali**: ${fmtN(identity.followers_now)} _(live Graph API; snapshot Turso ultimo: ${fmtN(identity.followers_snapshot_value)}, ${identity.followers_drift_from_snapshot >= 0 ? "+" : ""}${identity.followers_drift_from_snapshot} non ancora catturati)_`
+    );
+  } else {
+    L.push(`- **Follower attuali**: ${fmtN(identity.followers_now)}`);
+  }
   L.push(`- **Following**: ${fmtN(identity.follows_now)}`);
   if (r) {
     L.push(
-      `- **Ripartenza**: ${fmtDate(r.restart_iso)} (~${r.days_since_restart} giorni fa)`
-    );
-    L.push(
-      `- **Post nella nuova fase**: ${identity.posts_in_current_phase}`
+      `- **Ripartenza**: ${fmtDate(r.restart_iso)} (~${r.days_since_restart} giorni fa) · **Post nella nuova fase**: ${identity.posts_in_current_phase}`
     );
     L.push("");
     L.push(
@@ -638,15 +1166,10 @@ function renderReport({
     );
   } else {
     L.push(`- **Post indicizzati**: ${identity.posts_in_current_phase}`);
-    if (identity.first_active_post_date) {
-      L.push(
-        `- **Primo post tracciato**: ${fmtDate(identity.first_active_post_date)}`
-      );
-    }
   }
   if (identity.first_daily_date) {
     L.push(
-      `- **Daily snapshot disponibili**: ${fmtDate(identity.first_daily_date)} → ${fmtDate(identity.last_daily_date)}`
+      `- **Daily snapshot Turso**: ${fmtDate(identity.first_daily_date)} → ${fmtDate(identity.last_daily_date)}`
     );
   }
   L.push("");
@@ -655,18 +1178,18 @@ function renderReport({
     L.push("");
   }
 
-  // 2. Di cosa parli
-  L.push("## 2. Di cosa parli");
+  // ─── 3. DI COSA PARLI (cluster tematici) ─────────────────────────────
+  L.push("## 3. Di cosa parli");
   L.push("");
   if (narrative?.topicClusters?.length) {
     for (const c of narrative.topicClusters) {
+      const sharePct = c.share_pct != null ? ` · ${c.share_pct.toFixed(0)}% del feed` : "";
       L.push(
-        `### ${c.theme} · ${c.post_ids?.length || 0} post · reach medio ${fmtN(c.avg_reach)}`
+        `### ${c.theme} · ${c.post_ids?.length || 0} post${sharePct} · reach medio ${fmtN(c.avg_reach)}`
       );
       L.push("");
       if (c.take) L.push(c.take);
       L.push("");
-      // Mostra le caption corte dei post del cluster
       if (c.post_ids?.length) {
         const refs = c.post_ids
           .slice(0, 3)
@@ -684,20 +1207,51 @@ function renderReport({
     L.push("");
   }
 
-  // 3. Format & Cadence
-  L.push("## 3. Format & ritmo di posting");
+  // ─── 4. CAPTION FORENSICS ────────────────────────────────────────────
+  if (captionForensics) {
+    L.push("## 4. Caption forensics");
+    L.push("");
+    L.push("| Metrica | Valore |");
+    L.push("|---|---:|");
+    L.push(`| Caption analizzate | ${captionForensics.count_total} |`);
+    L.push(`| Lunghezza media | ${captionForensics.avg_length} char |`);
+    L.push(`| Lunghezza mediana | ${captionForensics.median_length} char |`);
+    L.push(`| Caption vuote | ${captionForensics.count_empty} (${pct(100 * captionForensics.count_empty / Math.max(1, captionForensics.count_total))}) |`);
+    L.push(`| Caption corte (<30 char) | ${captionForensics.count_short} |`);
+    L.push(`| Con domanda (?) | ${captionForensics.count_with_question} (${pct(captionForensics.question_rate_pct)}) |`);
+    L.push(`| Con CTA esplicita | ${captionForensics.count_with_cta} (${pct(captionForensics.cta_rate_pct)}) |`);
+    L.push(`| Con menzione (@) | ${captionForensics.count_with_mention} |`);
+    L.push(`| Con hashtag (#) | ${captionForensics.count_with_hashtag} |`);
+    L.push("");
+    if (captionForensics.hashtag_top10?.length) {
+      L.push(`**Top hashtag**: ${captionForensics.hashtag_top10.slice(0, 8).map((h) => `\`${h.tag}\` ×${h.count}`).join(" · ")}`);
+      L.push("");
+    }
+    if (captionForensics.mention_top10?.length) {
+      L.push(`**Top menzioni**: ${captionForensics.mention_top10.slice(0, 8).map((m) => `\`${m.handle}\` ×${m.count}`).join(" · ")}`);
+      L.push("");
+    }
+    if (narrative?.captionForensicsTake) {
+      L.push(narrative.captionForensicsTake);
+      L.push("");
+    }
+  }
+
+  // ─── 5. FORMAT & CADENCE + HEATMAP ────────────────────────────────────
+  L.push("## 5. Format, ritmo & quando posti");
   L.push("");
   if (cadence.gap_median_days != null) {
     L.push(
-      `- **Gap mediano tra post**: ${cadence.gap_median_days}g (σ ${cadence.gap_stddev_days}g)`
+      `- **Gap mediano tra post**: ${cadence.gap_median_days}g (σ ${cadence.gap_stddev_days}g) · **Frequenza**: ${cadence.posts_per_week_avg} post/sett`
     );
-    L.push(`- **Frequenza media**: ${cadence.posts_per_week_avg} post/settimana`);
     L.push(
-      `- **Pausa più lunga**: ${cadence.longest_pause_days}g (terminata il ${
-        cadence.longest_pause_end ? fmtDate(cadence.longest_pause_end) : "—"
-      })`
+      `- **Pausa più lunga (in fase)**: ${cadence.longest_pause_days}g · **Giorni dall'ultimo post**: ${cadence.days_since_last_post}`
     );
-    L.push(`- **Giorni dall'ultimo post**: ${cadence.days_since_last_post}`);
+  }
+  if (contentDebt) {
+    L.push(
+      `- **Debito**: ${pct(contentDebt.empty_caption_pct)} caption vuote · ${pct(contentDebt.short_caption_pct)} corte · ${pct(contentDebt.no_cta_pct)} senza CTA · concentrazione su **${contentDebt.format_concentration?.top_type}** ${pct(contentDebt.format_concentration?.top_type_pct)}`
+    );
   }
   L.push("");
   L.push("**Performance per tipo di contenuto**:");
@@ -706,12 +1260,42 @@ function renderReport({
   L.push("|---|---:|---:|---:|---:|---:|");
   for (const t of byType) {
     L.push(
-      `| ${t.type} | ${t.count} | ${fmtN(t.avg_reach)} | ${pct(t.avg_er)} | ${pct(
-        t.avg_save_rate
-      )} | ${pct(t.avg_share_rate)} |`
+      `| ${t.type} | ${t.count} | ${fmtN(t.avg_reach)} | ${pct(t.avg_er)} | ${pct(t.avg_save_rate)} | ${pct(t.avg_share_rate)} |`
     );
   }
   L.push("");
+  if (hourDowMatrix?.matrix?.length) {
+    L.push("**Heatmap giorno × fascia oraria** (reach medio per slot, vuoto = nessun post)");
+    L.push("");
+    const buckets = hourDowMatrix.matrix[0]?.buckets?.map((b) => b.slot) || [];
+    L.push(`| | ${buckets.join(" | ")} |`);
+    L.push(`|---|${buckets.map(() => "---:").join("|")}|`);
+    for (const row of hourDowMatrix.matrix) {
+      const cells = row.buckets.map((b) =>
+        b.count === 0 ? "·" : `${fmtN(b.avg_reach)}<br><sub>${b.count}p</sub>`
+      );
+      L.push(`| **${row.dow}** | ${cells.join(" | ")} |`);
+    }
+    L.push("");
+    if (hourDowMatrix.best_slot) {
+      L.push(
+        `- **Slot migliore**: ${hourDowMatrix.best_slot.dow} ${hourDowMatrix.best_slot.slot} → reach medio ${fmtN(hourDowMatrix.best_slot.avg_reach)} (${hourDowMatrix.best_slot.count} post)`
+      );
+    }
+    if (hourDowMatrix.worst_slot) {
+      L.push(
+        `- **Slot peggiore**: ${hourDowMatrix.worst_slot.dow} ${hourDowMatrix.worst_slot.slot} → reach medio ${fmtN(hourDowMatrix.worst_slot.avg_reach)} (${hourDowMatrix.worst_slot.count} post)`
+      );
+    }
+    if (hourDowMatrix.most_used_slot) {
+      L.push(
+        `- **Slot più usato**: ${hourDowMatrix.most_used_slot.dow} ${hourDowMatrix.most_used_slot.slot} → ${hourDowMatrix.most_used_slot.count} post pubblicati`
+      );
+    }
+    L.push("");
+    L.push("_Orari in UTC. Per Europa/Roma sommare +1h (inverno) o +2h (estate)._");
+    L.push("");
+  }
   if (narrative?.cadenceTake) {
     L.push(narrative.cadenceTake);
     L.push("");
@@ -721,8 +1305,8 @@ function renderReport({
     L.push("");
   }
 
-  // 4. Audience
-  L.push("## 4. Audience");
+  // ─── 6. AUDIENCE ──────────────────────────────────────────────────────
+  L.push("## 6. Audience");
   L.push("");
   if (audienceDate) {
     L.push(`_Snapshot demografico al ${fmtDate(audienceDate)}_`);
@@ -750,8 +1334,8 @@ function renderReport({
     L.push("");
   }
 
-  // 5. Stories (canale di nurturing dell'audience esistente)
-  L.push("## 5. Stories — il canale del retain");
+  // ─── 7. STORIES ──────────────────────────────────────────────────────
+  L.push("## 7. Stories — canale di nurturing");
   L.push("");
   if (storyStats && storyStats.count > 0) {
     const cadenceLabel =
@@ -783,39 +1367,41 @@ function renderReport({
     L.push("");
   }
 
-  // 6. Performance — già implicita nei numeri sopra. Skip header dedicato,
-  // unifichiamo in un take di sintesi.
-  // (le metriche sono distribuite nelle sezioni 3 e 4)
-
-  // 7. Top 5
-  L.push("## 6. Top 5 post per reach");
+  // ─── 8. TOP 5 weighted (qualità segnale) ──────────────────────────────
+  L.push("## 8. Top 5 — qualità del segnale");
   L.push("");
-  L.push("| Data | Tipo | Reach | ER | Saved | Shares | Caption |");
-  L.push("|---|---|---:|---:|---:|---:|---|");
-  for (const p of topBottom.top) {
-    const cap = (p.caption || "").slice(0, 70).replace(/\|/g, "\\|").replace(/\n+/g, " ");
-    L.push(
-      `| ${fmtDateShort(p.timestamp)} | ${p.mediaType} | ${fmtN(p.reach)} | ${pct(p.er)} | ${p.saved} | ${p.shares} | ${cap}${p.caption.length > 70 ? "…" : ""} |`
-    );
+  L.push(
+    "_Score ponderato = `shares×4 + saved×3 + comments×2 + likes×1`. Misura la **qualità** del segnale (uno share vale 4 like)._"
+  );
+  L.push("");
+  if (weightedEngagement?.top5_by_weighted?.length) {
+    L.push("| Data | Tipo | Score | Score/reach | Reach | Caption |");
+    L.push("|---|---|---:|---:|---:|---|");
+    for (const p of weightedEngagement.top5_by_weighted) {
+      const cap = (p.caption_preview || "").slice(0, 60).replace(/\|/g, "\\|").replace(/\n+/g, " ");
+      L.push(
+        `| ${fmtDateShort(p.timestamp)} | ${p.media_type} | **${p.weighted_score}** | ${pct(p.weighted_score_per_reach)} | ${fmtN(p.reach)} | ${cap}${(p.caption_preview || "").length > 60 ? "…" : ""} |`
+      );
+    }
+    L.push("");
   }
-  L.push("");
   if (narrative?.topPattern) {
     L.push(`**Pattern dei vincenti**: ${narrative.topPattern}`);
     L.push("");
   }
 
-  // 7. Bottom 5
-  L.push("## 7. Bottom 5 — sotto-performer");
+  // ─── 9. BOTTOM 5 weighted ─────────────────────────────────────────────
+  L.push("## 9. Bottom 5 — sotto-performer");
   L.push("");
-  if (topBottom.bottom.length) {
-    L.push("_Filtrati su reach ≥ 50 per evitare rumore. Ordinati per ER ascendente._");
+  if (weightedEngagement?.bottom5_by_weighted?.length) {
+    L.push("_Filtrati su reach ≥ 50 (no rumore) ed esclusi dai top — ordinati per score ponderato crescente._");
     L.push("");
-    L.push("| Data | Tipo | Reach | ER | Saved | Shares | Caption |");
-    L.push("|---|---|---:|---:|---:|---:|---|");
-    for (const p of topBottom.bottom) {
-      const cap = (p.caption || "").slice(0, 70).replace(/\|/g, "\\|").replace(/\n+/g, " ");
+    L.push("| Data | Tipo | Score | Score/reach | Reach | Caption |");
+    L.push("|---|---|---:|---:|---:|---|");
+    for (const p of weightedEngagement.bottom5_by_weighted) {
+      const cap = (p.caption_preview || "").slice(0, 60).replace(/\|/g, "\\|").replace(/\n+/g, " ");
       L.push(
-        `| ${fmtDateShort(p.timestamp)} | ${p.mediaType} | ${fmtN(p.reach)} | ${pct(p.er)} | ${p.saved} | ${p.shares} | ${cap}${p.caption.length > 70 ? "…" : ""} |`
+        `| ${fmtDateShort(p.timestamp)} | ${p.media_type} | ${p.weighted_score} | ${pct(p.weighted_score_per_reach)} | ${fmtN(p.reach)} | ${cap}${(p.caption_preview || "").length > 60 ? "…" : ""} |`
       );
     }
     L.push("");
@@ -828,8 +1414,42 @@ function renderReport({
     L.push("");
   }
 
-  // 8. Curva follower
-  L.push("## 8. Curva follower");
+  // ─── 10. COHORT — early vs late ─────────────────────────────────────────
+  if (cohortComparison) {
+    L.push("## 10. Cohort: stai migliorando o stallando?");
+    L.push("");
+    const trendLabels = {
+      improving: "🟢 IN MIGLIORAMENTO",
+      stalling: "🟡 STALLO",
+      degrading: "🔴 IN PEGGIORAMENTO",
+    };
+    L.push(`### Trend: **${trendLabels[cohortComparison.trend] || cohortComparison.trend}**`);
+    L.push("");
+    L.push("| Cohort | Post | Reach medio | ER medio | Saved | Shares |");
+    L.push("|---|---:|---:|---:|---:|---:|");
+    L.push(
+      `| **Early** (${cohortComparison.early.period_label}) | ${cohortComparison.early.count} | ${fmtN(cohortComparison.early.avg_reach)} | ${pct(cohortComparison.early.avg_er)} | ${cohortComparison.early.avg_saved.toFixed(1)} | ${cohortComparison.early.avg_shares.toFixed(1)} |`
+    );
+    L.push(
+      `| **Late** (${cohortComparison.late.period_label}) | ${cohortComparison.late.count} | ${fmtN(cohortComparison.late.avg_reach)} | ${pct(cohortComparison.late.avg_er)} | ${cohortComparison.late.avg_saved.toFixed(1)} | ${cohortComparison.late.avg_shares.toFixed(1)} |`
+    );
+    L.push(
+      `| **Δ%** | — | ${cohortComparison.reach_delta_pct >= 0 ? "+" : ""}${cohortComparison.reach_delta_pct.toFixed(1)}% | ${cohortComparison.er_delta_pct >= 0 ? "+" : ""}${cohortComparison.er_delta_pct.toFixed(1)}% | — | — |`
+    );
+    L.push("");
+    if (narrative?.cohortTake) {
+      L.push(narrative.cohortTake);
+      L.push("");
+    }
+  } else {
+    L.push("## 10. Cohort: stai migliorando o stallando?");
+    L.push("");
+    L.push("_Campione troppo piccolo per cohort comparison (servono ≥ 10 post nella fase corrente)._");
+    L.push("");
+  }
+
+  // ─── 11. CURVA FOLLOWER ──────────────────────────────────────────────
+  L.push("## 11. Curva follower");
   L.push("");
   if (followerTrend) {
     L.push(`- **Inizio storico**: ${fmtN(followerTrend.start_followers)} follower`);
@@ -853,8 +1473,29 @@ function renderReport({
     L.push("");
   }
 
-  // 9. Verità scomode
-  L.push("## 9. Verità scomode");
+  // ─── 12. HYPOTHESIS TESTS ──────────────────────────────────────────────
+  if (narrative?.hypothesisTests?.length) {
+    L.push("## 12. Hypothesis tests");
+    L.push("");
+    L.push("_Ipotesi forti formulate dal data + verificate contro lo storico. Verdetto = CONFERMATA / RESPINTA / DATI INSUFFICIENTI._");
+    L.push("");
+    for (const h of narrative.hypothesisTests) {
+      const verdictColor = {
+        CONFERMATA: "🟢",
+        RESPINTA: "🔴",
+        "DATI INSUFFICIENTI": "🟡",
+      };
+      const icon = verdictColor[h.verdict] || "•";
+      L.push(`### ${icon} ${h.verdict || "—"}`);
+      L.push(`**Ipotesi**: ${h.hypothesis}`);
+      if (h.verification) L.push(`**Verifica**: ${h.verification}`);
+      if (h.implication) L.push(`**Implicazione**: ${h.implication}`);
+      L.push("");
+    }
+  }
+
+  // ─── 13. VERITÀ SCOMODE ────────────────────────────────────────────────
+  L.push("## 13. Verità scomode");
   L.push("");
   if (narrative?.uncomfortableTruths?.length) {
     for (const t of narrative.uncomfortableTruths) {
@@ -867,8 +1508,25 @@ function renderReport({
     L.push("");
   }
 
-  // 10. Strategia
-  L.push("## 10. Strategia 30 giorni");
+  // ─── 14. A/B TEST PLAN ─────────────────────────────────────────────────
+  if (narrative?.abTests?.length) {
+    L.push("## 14. A/B test plan");
+    L.push("");
+    L.push("_Esperimenti realmente eseguibili nei prossimi 30g per generare evidenze nuove (non opinioni)._");
+    L.push("");
+    for (const t of narrative.abTests) {
+      L.push(`### ${t.name || "Test"}`);
+      L.push(`- **Ipotesi**: ${t.hypothesis}`);
+      L.push(`- **Variant** (cosa cambia): ${t.variant}`);
+      L.push(`- **Control** (baseline): ${t.control}`);
+      L.push(`- **KPI primario**: ${t.primary_kpi}`);
+      L.push(`- **Sample**: ${t.sample}${t.duration_days ? ` · **Durata**: ${t.duration_days}g` : ""}`);
+      L.push("");
+    }
+  }
+
+  // ─── 15. STRATEGIA 30 GIORNI ───────────────────────────────────────────
+  L.push("## 15. Strategia 30 giorni");
   L.push("");
   if (narrative?.strategy?.length) {
     narrative.strategy.forEach((s, i) => {
@@ -896,10 +1554,19 @@ function renderReport({
     `- Reach e accounts_engaged dei daily sono **somme giornaliere**, non valori unique-su-finestra (per quello servirebbe Graph API live). Per i tier IG viene usato benchmark micro-account (sotto 1k follower).`
   );
   L.push(
-    `- Top/Bottom calcolati sulla **ultima snapshot disponibile** di ogni post (cron 4h); ER = (like + commenti + saved + shares) / reach × 100.`
+    `- Top/Bottom (sezioni 8-9) calcolati su **score ponderato** \`shares×4 + saved×3 + comments×2 + likes×1\` — riflette qualità del segnale, non quantità.`
   );
   L.push(
-    `- Bottom 5 filtrati su reach ≥ 50 per evitare rumore di post quasi-mai-visti.`
+    `- Bottom 5 filtrati su reach ≥ 50 (no rumore) ed esclusi quelli già nei Top.`
+  );
+  L.push(
+    `- Pulp Index (cockpit) = score 0-100 composito su cadence (0-25) + variety (0-15) + engagement (0-25) + growth (0-20) + caption_depth (0-15). Grade A+ ≥90, A ≥80, B+ ≥70, B ≥60, C+ ≥50, C ≥40, D ≥30, F sotto.`
+  );
+  L.push(
+    `- Cohort early-vs-late confronta i primi 5 post post-ripartenza con gli ultimi 5. Trend "improving" se reach late ≥ +10% rispetto a early, "degrading" se ≤ -10%, sennò "stalling".`
+  );
+  L.push(
+    `- Hypothesis tests e A/B test plan generati dal LLM ma calibrati sul payload effettivo — i numeri citati sono verificabili sul dump JSON che il modello ha ricevuto.`
   );
   L.push(
     `- Generato da \`scripts/report-deep.js\`${narrative ? ` · narrative via OpenAI ${process.env.OPENAI_MODEL || "gpt-5.4-mini"}` : " · narrative non disponibile"}.`
@@ -948,13 +1615,28 @@ async function main() {
       `Caricati: ${dailyActive.length} daily · ${postsActive.length} post · audience ${audienceDate || "n/a"}`
     );
 
-    const identity = computeIdentity(dailyActive, postsActive, restart, posts.length);
+    // Live profile da Graph API per i valori "ora" (follower/following/media)
+    console.log("Fetch live profile da Graph API...");
+    const liveProfile = await fetchLiveProfile();
+    if (liveProfile) {
+      console.log(
+        `Live: ${liveProfile.followers_count} follower (snapshot Turso ultimo: ${dailyActive[dailyActive.length - 1]?.followers ?? "n/a"})`
+      );
+    }
+
+    const identity = computeIdentity(dailyActive, postsActive, restart, posts.length, liveProfile);
     const cadence = computeCadence(postsActive);
     const byType = computePerformanceByType(postsActive);
     const followerTrend = computeFollowerTrend(dailyActive);
     const topBottom = topBottomPosts(postsActive, 5);
     const audSummary = audienceSummary(audience);
     const storyStats = computeStoryStats(storiesActive);
+    const captionForensics = computeCaptionForensics(postsActive);
+    const hourDowMatrix = computeHourDowMatrix(postsActive);
+    const cohortComparison = computeCohortComparison(postsActive, 5);
+    const weightedEngagement = computeWeightedEngagement(postsActive);
+    const contentDebt = computeContentDebt(postsActive);
+    const pulpIndex = computePulpIndex(identity, cadence, byType, followerTrend, contentDebt, captionForensics);
 
     // Payload per LLM: SOLO post post-ripartenza (se restart rilevato).
     // La pausa precedente e' un fact-only nel campo identity.restart.
@@ -965,6 +1647,12 @@ async function main() {
       follower_trend: followerTrend,
       audience: { date: audienceDate, ...audSummary },
       stories: storyStats,
+      caption_forensics: captionForensics,
+      hour_dow_matrix: hourDowMatrix,
+      cohort: cohortComparison,
+      weighted_engagement: weightedEngagement,
+      content_debt: contentDebt,
+      pulp_index: pulpIndex,
       posts: postsActive.map((p) => ({
         id: p.postId,
         date: p.timestamp,
@@ -1017,6 +1705,12 @@ async function main() {
       storyStats,
       narrative,
       posts: postsActive,
+      captionForensics,
+      hourDowMatrix,
+      cohortComparison,
+      weightedEngagement,
+      contentDebt,
+      pulpIndex,
     });
 
     if (outputMode === "stdout") {

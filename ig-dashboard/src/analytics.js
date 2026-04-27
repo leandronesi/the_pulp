@@ -180,13 +180,6 @@ export function classifyCurveType(series) {
   return "steady";
 }
 
-export function benchmarkTier(ratio) {
-  if (ratio == null || !Number.isFinite(ratio)) return null;
-  if (ratio >= 1.15) return { label: "sopra atteso", color: "#EDE5D0" };
-  if (ratio <= 0.85) return { label: "sotto atteso", color: "#D98B6F" };
-  return { label: "in linea", color: "#7FB3A3" };
-}
-
 export function derivePostAnalytics(posts, postHistory = {}, account = null) {
   const basePosts = (posts || []).map((post) => {
     const reach = metricOf(post, "reach");
@@ -208,7 +201,6 @@ export function derivePostAnalytics(posts, postHistory = {}, account = null) {
     };
   });
 
-  const overallAvgReach = average(basePosts.map((post) => post.reach));
   const followersCount = Number(account?.followers_count) || null;
 
   return Object.fromEntries(
@@ -219,9 +211,6 @@ export function derivePostAnalytics(posts, postHistory = {}, account = null) {
         lifecycleSeries.length || estimateObservedDays(base.post, history);
       const reachInWindow = lifecycleSeries[lifecycleSeries.length - 1]?.reach ?? base.reach;
       const savedInWindow = lifecycleSeries[lifecycleSeries.length - 1]?.saved ?? base.saved;
-      const benchmarkMid =
-        (MEDIA_TYPE_BENCHMARKS[base.mediaType]?.mid || 1) * overallAvgReach;
-      const benchmarkRatio = safeRatio(base.reach, benchmarkMid);
 
       return [
         base.id,
@@ -240,9 +229,6 @@ export function derivePostAnalytics(posts, postHistory = {}, account = null) {
           reachRate: safeRatio(base.reach, followersCount)
             ? safeRatio(base.reach, followersCount) * 100
             : null,
-          benchmarkRatio,
-          benchmarkDeltaPct:
-            benchmarkRatio != null ? (benchmarkRatio - 1) * 100 : null,
           lifecycleSeries,
           curveType: classifyCurveType(lifecycleSeries),
         },
@@ -261,8 +247,6 @@ export function deriveContentMix(posts) {
       interSum: 0,
       velocitySum: 0,
       velocityCount: 0,
-      benchmarkSum: 0,
-      benchmarkCount: 0,
       outlierCount: 0,
     };
   });
@@ -277,10 +261,6 @@ export function deriveContentMix(posts) {
       bucket.velocitySum += post.velocity7d;
       bucket.velocityCount += 1;
     }
-    if (Number.isFinite(post.benchmarkRatio)) {
-      bucket.benchmarkSum += post.benchmarkRatio;
-      bucket.benchmarkCount += 1;
-    }
     if (post.outlierFlag) bucket.outlierCount += 1;
   }
 
@@ -290,9 +270,6 @@ export function deriveContentMix(posts) {
     avgReach: bucket.count ? bucket.reachSum / bucket.count : 0,
     avgEr: bucket.reachSum ? (bucket.interSum / bucket.reachSum) * 100 : 0,
     avgVelocity: bucket.velocityCount ? bucket.velocitySum / bucket.velocityCount : 0,
-    avgBenchmarkRatio: bucket.benchmarkCount
-      ? bucket.benchmarkSum / bucket.benchmarkCount
-      : null,
     outlierCount: bucket.outlierCount,
   }));
 }
@@ -340,11 +317,7 @@ export function deriveScatterMeta(posts) {
 
     const outlierFlag =
       (post.reach >= reachThreshold && post.er >= erMedian) ||
-      (post.er >= erThreshold && post.reach >= reachMedian) ||
-      (post.benchmarkRatio != null &&
-        post.benchmarkRatio >= 1.45 &&
-        post.reach >= reachMedian &&
-        post.er >= erMedian);
+      (post.er >= erThreshold && post.reach >= reachMedian);
 
     quadrantCounts[quadrant] += 1;
     byId[post.id] = { quadrant, outlierFlag };

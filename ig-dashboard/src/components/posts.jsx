@@ -13,57 +13,39 @@ import {
   Share2,
   Image as ImageIcon,
 } from "lucide-react";
-import { fmt, fmtSignedPct, fmtDate } from "../utils/format.js";
+import { fmt, fmtDate } from "../utils/format.js";
 import {
   MEDIA_TYPE_LABELS,
   MEDIA_TYPE_COLORS,
 } from "../utils/tiers.js";
 import {
   CURVE_TYPE_META,
-  benchmarkTier,
   isVideoLikeMedia,
 } from "../analytics.js";
 import { Sparkline, ContentMixStat } from "./kpi-cards.jsx";
 
 // ─── CONTENT_MIX_COPY ─────────────────────────────────────────────────────────
 const CONTENT_MIX_COPY = {
-  section:
-    "come performano i diversi tipi di contenuto rispetto all'atteso su questo account",
-  legend:
-    "Benchmark = reach attesa del formato su questo account. 0% = in linea, valori positivi = sopra atteso. Reach/giorno = reach medio al giorno nei primi 7 giorni osservati.",
   avgReach:
     "Media del reach dei post di questo formato. Formula: reach totale diviso numero di post.",
   avgEr:
     "Engagement rate del formato. Formula: interazioni totali diviso reach totale x 100. Interazioni = like + commenti + salvataggi + condivisioni.",
   avgVelocity:
     "Velocita di distribuzione. Per ogni post: reach osservato diviso giorni osservati, fino a 7 giorni. Qui vedi la media del formato, espressa come reach al giorno.",
-  avgBenchmark:
-    "Scarto rispetto alla reach attesa per questo formato sul tuo account. 0% = in linea, +20% = sopra atteso, -20% = sotto atteso. L'atteso parte dalla reach media account corretta per tipo di contenuto.",
 };
 
 // ─── ContentTypeTile ──────────────────────────────────────────────────────────
 export function ContentTypeTile({ data }) {
-  const bench = benchmarkTier(data.avgBenchmarkRatio);
   return (
     <div className="glass rounded-2xl p-4 sm:p-5">
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <div className="flex items-center gap-2">
-          <span
-            className="w-2.5 h-2.5 rounded-full"
-            style={{ backgroundColor: MEDIA_TYPE_COLORS[data.type] }}
-          />
-          <span className="text-xs mono-font uppercase tracking-wider text-white/70">
-            {MEDIA_TYPE_LABELS[data.type]}
-          </span>
-        </div>
-        {bench && (
-          <span
-            className="inline-flex items-center rounded-full px-2 py-0.5 text-[9px] mono-font uppercase tracking-wider"
-            style={{ backgroundColor: `${bench.color}15`, color: bench.color }}
-          >
-            {bench.label}
-          </span>
-        )}
+      <div className="flex items-center gap-2 mb-3">
+        <span
+          className="w-2.5 h-2.5 rounded-full"
+          style={{ backgroundColor: MEDIA_TYPE_COLORS[data.type] }}
+        />
+        <span className="text-xs mono-font uppercase tracking-wider text-white/70">
+          {MEDIA_TYPE_LABELS[data.type]}
+        </span>
       </div>
       <div className="display-font text-3xl text-white font-light mb-1">
         {data.count}
@@ -87,15 +69,6 @@ export function ContentTypeTile({ data }) {
             label="Reach/giorno"
             info={CONTENT_MIX_COPY.avgVelocity}
             value={fmt(data.avgVelocity)}
-          />
-          <ContentMixStat
-            label="Vs atteso"
-            info={CONTENT_MIX_COPY.avgBenchmark}
-            value={fmtSignedPct(
-              data.avgBenchmarkRatio != null
-                ? (data.avgBenchmarkRatio - 1) * 100
-                : null
-            )}
           />
         </div>
       )}
@@ -157,7 +130,6 @@ export function PostCard({ post, rank }) {
   const thumb = post.thumbnail_url || post.media_url;
   const caption = (post.caption || "").slice(0, 80);
   const isVideo = isVideoLikeMedia(post);
-  const bench = benchmarkTier(post.benchmarkRatio);
   const curveMeta = CURVE_TYPE_META[post.curveType] || CURVE_TYPE_META.forming;
   return (
     <a
@@ -218,14 +190,6 @@ export function PostCard({ post, rank }) {
           <span className="rounded-full px-2 py-0.5 text-[10px] mono-font bg-white/5 text-white/75">
             {fmt(post.velocity7d)}/g
           </span>
-          {bench && (
-            <span
-              className="rounded-full px-2 py-0.5 text-[10px] mono-font"
-              style={{ backgroundColor: `${bench.color}15`, color: bench.color }}
-            >
-              {fmtSignedPct(post.benchmarkDeltaPct)} vs atteso
-            </span>
-          )}
           <span
             className="rounded-full px-2 py-0.5 text-[10px] mono-font"
             style={{

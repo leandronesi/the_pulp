@@ -120,9 +120,14 @@ export function DeltaPill({ value }) {
 }
 
 // RateCard — tile compatto per la "rate strip" sotto l'hero.
-// Pensato per metriche derivate (save rate, share rate, views totali, engaged).
+// Pensato per metriche derivate (save rate, share rate, reach, engagement).
 // Meno imponente di KpiCard ma con tier pill visibile quando applicabile.
-export function RateCard({ icon, label, value, tier, deltaPct, info }) {
+// tierLabel: testo opzionale aggiunto alla pill dopo il tier.label (es. "30% dei follower").
+// legend: array opzionale di { label, color, range } per la stripe cluster IG.
+// legendCurrent: label del tier attivo nella legend (per evidenziarlo).
+// RateCard accetta legend perché solo Engagement ha la stripe cluster —
+// non era worth una astrazione separata.
+export function RateCard({ icon, label, value, tier, tierLabel, deltaPct, info, legend, legendCurrent }) {
   return (
     <div className="glass rounded-2xl p-4 sm:p-5 transition hover:border-white/15">
       <div className="flex items-center gap-2 text-white/55 text-[10px] mono-font mb-2 uppercase tracking-wider">
@@ -141,9 +146,34 @@ export function RateCard({ icon, label, value, tier, deltaPct, info }) {
               className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] mono-font uppercase tracking-wider"
               style={{ backgroundColor: `${tier.color}15`, color: tier.color }}
             >
-              {tier.label}
+              {tierLabel ? `${tier.label} · ${tierLabel}` : tier.label}
             </span>
           )}
+        </div>
+      )}
+      {legend && legend.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-2">
+          {legend.map((t) => {
+            const isCurrent = t.label === legendCurrent;
+            return (
+              <span
+                key={t.label}
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
+                style={{
+                  backgroundColor: isCurrent ? `${t.color}20` : `${t.color}10`,
+                  color: t.color,
+                  border: isCurrent ? `1px solid ${t.color}50` : "1px solid transparent",
+                  fontSize: "9px",
+                  fontFamily: "JetBrains Mono",
+                  textTransform: isCurrent ? "uppercase" : "none",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                {t.label}
+                <span style={{ opacity: 0.6, fontFamily: "JetBrains Mono" }}>{t.range}</span>
+              </span>
+            );
+          })}
         </div>
       )}
     </div>

@@ -13,16 +13,10 @@ import {
   ComposedChart,
   ScatterChart,
   Scatter,
-  BarChart,
-  Bar,
-  Cell as BarCell,
-  LineChart,
-  Line,
   ReferenceLine,
 } from "recharts";
 import {
   Users,
-  UserPlus,
   Eye,
   TrendingUp,
   Heart,
@@ -40,12 +34,13 @@ import {
   Grid3x3,
   UsersRound,
   CircleDot,
+  Layers,
+  Image as ImageIcon,
+  Video,
 } from "lucide-react";
 import { TOKEN, PAGE_ID, API } from "./config.js";
 import { generateFakeData, isFakeToken } from "./fakeData.js";
 import {
-  CURVE_TYPE_META,
-  benchmarkTier,
   deriveContentMix,
   derivePostAnalytics,
   deriveScatterMeta,
@@ -58,7 +53,6 @@ import Chat from "./Chat.jsx";
 // Sub-componenti estratti per modularita' — vedi src/components/.
 import {
   InfoTip,
-  DarkTooltip,
   ReachWithPostsTooltip,
   ScatterTooltip,
 } from "./components/tooltips.jsx";
@@ -68,19 +62,13 @@ import {
 } from "./components/stories.jsx";
 import { DateRangeSelector } from "./components/DateRangeSelector.jsx";
 import {
-  DeltaPill,
   RateCard,
   ReachTrio,
   KpiCard,
   SummaryRow,
-  ContentMixStat,
-  Sparkline,
 } from "./components/kpi-cards.jsx";
 import {
-  ContentTypeTile,
-  LifecycleMiniChart,
   PostCard,
-  Metric,
   AudiencePanel,
 } from "./components/posts.jsx";
 
@@ -149,9 +137,7 @@ function filterReachDaily(daily, sinceUnixSec, untilUnixSec) {
 import {
   fmt,
   fmtPct,
-  fmtSignedPct,
   fmtDate,
-  daysAgoTs,
   delta,
 } from "./utils/format.js";
 import {
@@ -160,9 +146,6 @@ import {
   saveRateTier,
   shareRateTier,
   ER_TIERS_LEGEND,
-  REACH_RATE_TIERS_LEGEND,
-  SAVE_RATE_TIERS_LEGEND,
-  SHARE_RATE_TIERS_LEGEND,
   MEDIA_TYPE_LABELS,
   MEDIA_TYPE_COLORS,
   POST_DOT_COLORS,
@@ -173,17 +156,13 @@ import {
 
 const CONTENT_MIX_COPY = {
   section:
-    "come performano i diversi tipi di contenuto rispetto all'atteso su questo account",
-  legend:
-    "Benchmark = reach attesa del formato su questo account. 0% = in linea, valori positivi = sopra atteso. Reach/giorno = reach medio al giorno nei primi 7 giorni osservati.",
+    "distribuzione e performance per tipo di contenuto nel periodo",
   avgReach:
     "Media del reach dei post di questo formato. Formula: reach totale diviso numero di post.",
   avgEr:
     "Engagement rate del formato. Formula: interazioni totali diviso reach totale x 100. Interazioni = like + commenti + salvataggi + condivisioni.",
   avgVelocity:
     "Velocita di distribuzione. Per ogni post: reach osservato diviso giorni osservati, fino a 7 giorni. Qui vedi la media del formato, espressa come reach al giorno.",
-  avgBenchmark:
-    "Scarto rispetto alla reach attesa per questo formato sul tuo account. 0% = in linea, +20% = sopra atteso, -20% = sotto atteso. L'atteso parte dalla reach media account corretta per tipo di contenuto.",
 };
 
 // Extract a metric value from the embedded insights array on a post
@@ -636,8 +615,6 @@ export default function App() {
         er: analytics.er ?? 0,
         velocity7d: analytics.velocity7d ?? null,
         saveVelocity7d: analytics.saveVelocity7d ?? null,
-        benchmarkRatio: analytics.benchmarkRatio ?? null,
-        benchmarkDeltaPct: analytics.benchmarkDeltaPct ?? null,
         lifecycleSeries: analytics.lifecycleSeries || [],
         curveType: analytics.curveType || "forming",
         observedDays: analytics.observedDays ?? 1,
@@ -690,7 +667,6 @@ export default function App() {
         thumb: p.thumbnail_url || p.media_url,
         date: p.timestamp,
         velocity7d: p.velocity7d,
-        benchmarkDeltaPct: p.benchmarkDeltaPct,
         quadrant: p.quadrant,
         outlierFlag: p.outlierFlag,
       });
@@ -963,15 +939,33 @@ export default function App() {
                 info="Follower attuali. La piccola curva sotto mostra come il numero cambia giorno per giorno (serve ≥2 giorni di dati per apparire). La Graph API non dà lo storico: ce lo costruiamo noi."
               />
               <KpiCard
-                icon={<UserPlus size={16} />}
-                label="Seguiti"
-                value={fmt(account.follows_count)}
+                icon={<Film size={16} />}
+                label={`Reels · ${dateRange}g`}
+                value={String(analyzedPosts.filter((p) => p.mediaType === "REELS").length)}
                 accent="from-[#D4A85C] to-[#B8823A]"
-                info="Numero di account che The Pulp segue."
+                info={`Numero di reel pubblicati negli ultimi ${dateRange} giorni.`}
               />
               <KpiCard
-                icon={<TrendingUp size={16} />}
-                label={`Reach · ${dateRange}g`}
+                icon={<Layers size={16} />}
+                label={`Carousel · ${dateRange}g`}
+                value={String(analyzedPosts.filter((p) => p.mediaType === "CAROUSEL_ALBUM").length)}
+                accent="from-[#7FB3A3] to-[#3E7A66]"
+                info={`Numero di carousel pubblicati negli ultimi ${dateRange} giorni.`}
+              />
+              <KpiCard
+                icon={<ImageIcon size={16} />}
+                label={`Foto · ${dateRange}g`}
+                value={String(analyzedPosts.filter((p) => p.mediaType === "IMAGE").length)}
+                accent="from-[#EDE5D0] to-[#D4A85C]"
+                info={`Numero di foto pubblicate negli ultimi ${dateRange} giorni.`}
+              />
+            </section>
+
+            {/* Rate strip — reach, engagement (con leggenda cluster), save rate, share rate */}
+            <section className="grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-4 gap-3 mb-8 fadein">
+              <RateCard
+                icon={<TrendingUp size={14} />}
+                label="Reach"
                 value={fmt(totals.reach)}
                 deltaPct={delta(totals.reach, totalsPrev.reach)}
                 tier={reachRateTier(reachRate)}
@@ -980,22 +974,18 @@ export default function App() {
                     ? `${reachRate.toFixed(0)}% dei follower`
                     : null
                 }
-                accent="from-[#8FB5A3] to-[#3E7A66]"
                 info={`Account UNICI che hanno visto almeno un contenuto negli ultimi ${dateRange} giorni. Un utente che vede 10 post conta 1 (dedupe automatico Meta). Il pill "X% dei follower" è il reach rate: quanto hai bucato la cerchia. Viral >100%, strong 30-100%, normal 10-30%, low <10%.`}
               />
-              <KpiCard
-                icon={<Activity size={16} />}
-                label={`Engagement · ${dateRange}g`}
+              <RateCard
+                icon={<Activity size={14} />}
+                label="Engagement"
                 value={fmtPct(engagementRate)}
                 deltaPct={delta(engagementRate, engagementRatePrev)}
                 tier={erTier(engagementRate)}
-                accent="from-[#3E7A66] to-[#0E4A3E]"
+                legend={ER_TIERS_LEGEND}
+                legendCurrent={erTier(engagementRate)?.label}
                 info="Engagement rate del periodo: (like + commenti + salvati + condivisioni + azioni sul profilo) / reach. Più alto = audience che interagisce di più rispetto a quanta ne raggiungi."
               />
-            </section>
-
-            {/* Rate strip — save/share/views/engaged (le metriche 2026) */}
-            <section className="grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-4 gap-3 mb-8 fadein">
               <RateCard
                 icon={<Bookmark size={14} />}
                 label="Save rate"
@@ -1009,26 +999,6 @@ export default function App() {
                 value={fmtPct(postMetricsAgg?.shareRate)}
                 tier={shareRateTier(postMetricsAgg?.shareRate)}
                 info="Shares ÷ Reach × 100. 'Vale la pena mandarlo a qualcuno'. >1.5% excellent · 0.5–1.5% good · <0.5% avg."
-              />
-              <RateCard
-                icon={<Film size={14} />}
-                label={
-                  postMetricsAgg?.videoCount
-                    ? `Views · ${postMetricsAgg.videoCount} video/reel`
-                    : "Views"
-                }
-                value={fmt(postMetricsAgg?.viewsTotal ?? 0)}
-                info="Somma delle visualizzazioni su video e reel visibili. Diversa dal reach: una view conta ogni singola volta che il contenuto viene mostrato, anche allo stesso utente. Dal 2025 IG ha unificato 'impressions' in 'views'."
-              />
-              <RateCard
-                icon={<Sparkles size={14} />}
-                label="Account coinvolti"
-                value={fmt(totals.accounts_engaged)}
-                deltaPct={delta(
-                  totals.accounts_engaged,
-                  totalsPrev.accounts_engaged
-                )}
-                info="Utenti UNICI che hanno fatto almeno un'azione (like, commento, saved, share). Uno che mette 5 like conta 1."
               />
             </section>
 
@@ -1221,81 +1191,61 @@ export default function App() {
                     <p className="text-xs text-white/40 mono-font mt-1">
                       {CONTENT_MIX_COPY.section}
                     </p>
-                    <div className="mt-3 flex flex-wrap gap-2 text-[10px] mono-font text-white/55">
-                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">
-                        benchmark = reach attesa del formato
-                      </span>
-                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">
-                        0% = in linea
-                      </span>
-                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">
-                        reach/giorno = reach medio al giorno
-                      </span>
-                      <InfoTip text={CONTENT_MIX_COPY.legend} side="bottom" />
-                    </div>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-                  <div className="lg:col-span-2 grid grid-cols-1 min-[520px]:grid-cols-2 gap-3">
-                    {contentMix.map((m) => (
-                      <ContentTypeTile key={m.type} data={m} />
-                    ))}
-                  </div>
-                  <div className="glass rounded-3xl p-5 sm:p-6 lg:col-span-3">
-                    <p className="text-xs text-white/40 mono-font mb-4 uppercase tracking-wider">
-                      Reach medio per tipo
-                    </p>
-                    <div className="overflow-x-auto no-scrollbar">
-                      <div className="min-w-[520px] h-[220px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={contentMix.filter((m) => m.count > 0)}
-                        layout="vertical"
-                        margin={{ left: 20 }}
+                {/* 4 tile per tipo (Reels, Carousel, Foto, Video) — sempre tutti
+                    visibili anche con count=0, per segnalare assenze esplicite. */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    { type: "REELS", icon: <Film size={18} className="text-white/60" /> },
+                    { type: "CAROUSEL_ALBUM", icon: <Layers size={18} className="text-white/60" /> },
+                    { type: "IMAGE", icon: <ImageIcon size={18} className="text-white/60" /> },
+                    { type: "VIDEO", icon: <Video size={18} className="text-white/60" /> },
+                  ].map(({ type, icon }) => {
+                    const m = contentMix.find((x) => x.type === type) || { type, count: 0, avgReach: 0, avgEr: 0 };
+                    const empty = m.count === 0;
+                    return (
+                      <div
+                        key={type}
+                        className="glass rounded-2xl p-4"
+                        style={{ opacity: empty ? 0.45 : 1 }}
                       >
-                        <CartesianGrid
-                          strokeDasharray="3 3"
-                          stroke="rgba(255,255,255,0.05)"
-                        />
-                        <XAxis
-                          type="number"
-                          stroke="rgba(255,255,255,0.3)"
-                          tick={{
-                            fontSize: 11,
-                            fontFamily: "JetBrains Mono",
-                          }}
-                          tickFormatter={fmt}
-                        />
-                        <YAxis
-                          type="category"
-                          dataKey="type"
-                          width={80}
-                          stroke="rgba(255,255,255,0.3)"
-                          tick={{
-                            fontSize: 11,
-                            fontFamily: "JetBrains Mono",
-                          }}
-                          tickFormatter={(t) => MEDIA_TYPE_LABELS[t]}
-                        />
-                        <Tooltip content={<DarkTooltip />} />
-                        <Bar
-                          dataKey="avgReach"
-                          radius={[0, 6, 6, 0]}
-                        >
-                          {contentMix
-                            .filter((m) => m.count > 0)
-                            .map((m) => (
-                              <BarCell
-                                key={m.type}
-                                fill={MEDIA_TYPE_COLORS[m.type]}
-                              />
-                            ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
+                        <div className="flex items-center gap-2 mb-3">
+                          {icon}
+                          <span
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: MEDIA_TYPE_COLORS[type] }}
+                          />
+                          <span className="text-[10px] mono-font uppercase tracking-wider text-white/60 truncate">
+                            {MEDIA_TYPE_LABELS[type]}
+                          </span>
+                        </div>
+                        <div className="display-font text-4xl text-white font-light leading-none mb-1">
+                          {m.count}
+                        </div>
+                        <div className="text-[10px] mono-font text-white/40 uppercase tracking-wider mb-3">
+                          post
+                        </div>
+                        {!empty && (
+                          <div className="pt-3 border-t border-white/5 space-y-1.5 text-[10px] mono-font">
+                            <div className="flex justify-between">
+                              <span className="text-white/45">reach medio</span>
+                              <span className="text-white font-semibold tabular-nums">{fmt(m.avgReach)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-white/45">ER medio</span>
+                              <span className="text-white font-semibold tabular-nums">{m.avgEr.toFixed(1)}%</span>
+                            </div>
+                          </div>
+                        )}
+                        {empty && (
+                          <div className="text-[10px] mono-font text-white/30">
+                            nessun post nel periodo
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  </div>
+                    );
+                  })}
                 </div>
               </section>
             )}

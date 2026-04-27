@@ -1,6 +1,6 @@
 import * as RTooltip from "@radix-ui/react-tooltip";
 import { Info } from "lucide-react";
-import { fmt, fmtDate, fmtSignedPct } from "../utils/format.js";
+import { fmt, fmtDate } from "../utils/format.js";
 import { POST_DOT_COLORS, POST_DOT_LABELS } from "../utils/tiers.js";
 import { resolveMediaType } from "../analytics.js";
 
@@ -159,12 +159,6 @@ export function ScatterTooltip({ active, payload }) {
           <span className="text-white/50">reach/g</span>
           <span className="text-white font-semibold ml-1">
             {fmt(d.velocity7d)}/g
-          </span>
-        </div>
-        <div>
-          <span className="text-white/50">vs atteso</span>
-          <span className="text-white font-semibold ml-1">
-            {fmtSignedPct(d.benchmarkDeltaPct)}
           </span>
         </div>
         <div className="col-span-2">

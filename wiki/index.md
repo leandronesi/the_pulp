@@ -27,6 +27,7 @@ Artefatto persistente e compondente di conoscenza sul progetto. Pattern Karpathy
 - [decisions/005-graph-api-vs-instagram-login.md](decisions/005-graph-api-vs-instagram-login.md) — FB Graph API, non Instagram Login
 - [decisions/006-chat-agent.md](decisions/006-chat-agent.md) — Chat agent dev-only via Vite middleware, function calling su Turso
 - [decisions/007-tab-structure.md](decisions/007-tab-structure.md) — 3 tab (Overview/Posts/Audience) per IA, URL hash, date filter consistency + fallback 90d chunking
+- [decisions/008-reel-watch-time.md](decisions/008-reel-watch-time.md) — Watch time reel-only su `post_snapshot` con colonne nullable + fetch dedicato
 
 ### Concetti
 - [concepts/engagement-rate.md](concepts/engagement-rate.md) — Formula, tier, pitfall

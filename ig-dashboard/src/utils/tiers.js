@@ -42,6 +42,17 @@ export const shareRateTier = (rate) => {
   return { label: "avg", color: "#D4A85C" };
 };
 
+// Reel avg watch time in secondi. Tipica reel 15–30s; soglie pensate per
+// account in nascita: >15s = la metà di un reel medio è guardata, segnale
+// fortissimo. <4s = swipe-via, il gancio iniziale non funziona.
+export const watchTimeTier = (sec) => {
+  if (sec == null || Number.isNaN(sec)) return null;
+  if (sec > 15) return { label: "excellent", color: "#EDE5D0" };
+  if (sec >= 8) return { label: "good", color: "#7FB3A3" };
+  if (sec >= 4) return { label: "avg", color: "#D4A85C" };
+  return { label: "poor", color: "#D98B6F" };
+};
+
 // ─── Tier arrays per la Legenda ──────────────────────────────────────────
 // Stesse soglie delle funzioni sopra, ordinate dal peggiore al migliore.
 
@@ -70,6 +81,13 @@ export const SHARE_RATE_TIERS_LEGEND = [
   { label: "avg", color: "#D4A85C", range: "<0.5%" },
   { label: "good", color: "#7FB3A3", range: "0.5–1.5%" },
   { label: "excellent", color: "#EDE5D0", range: ">1.5%" },
+];
+
+export const WATCH_TIME_TIERS_LEGEND = [
+  { label: "poor", color: "#D98B6F", range: "<4s" },
+  { label: "avg", color: "#D4A85C", range: "4–8s" },
+  { label: "good", color: "#7FB3A3", range: "8–15s" },
+  { label: "excellent", color: "#EDE5D0", range: ">15s" },
 ];
 
 // ─── Palette media-type per UI ────────────────────────────────────────────

@@ -35,7 +35,7 @@ async function buildHistory() {
     ),
     client.execute(
       `SELECT post_id, fetched_at, reach, like_count, comments_count,
-              saved, shares, views
+              saved, shares, views, video_view_total_time, avg_watch_time
        FROM post_snapshot ORDER BY fetched_at ASC`
     ),
     client.execute(
@@ -77,6 +77,11 @@ async function buildHistory() {
       saved: Number(r.saved) || 0,
       shares: Number(r.shares) || 0,
       views: Number(r.views) || 0,
+      // Reel-only (REELS): null sui non-reel. ms.
+      video_view_total_time:
+        r.video_view_total_time == null ? null : Number(r.video_view_total_time),
+      avg_watch_time:
+        r.avg_watch_time == null ? null : Number(r.avg_watch_time),
     });
   }
 

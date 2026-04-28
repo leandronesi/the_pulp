@@ -44,8 +44,15 @@ Snapshot delle metriche variabili di ogni post ad ogni fetch. PK `(post_id, fetc
 | `fetched_at` | INTEGER | ms |
 | `like_count`, `comments_count` | INTEGER | dai field base IG |
 | `reach`, `saved`, `shares`, `views` | INTEGER | dai per-post insights |
+| `video_view_total_time` | INTEGER | ms, **REEL-only** (NULL per image/carousel). `ig_reels_video_view_total_time` |
+| `avg_watch_time` | INTEGER | ms, **REEL-only** (NULL per image/carousel). `ig_reels_avg_watch_time`. Segnale forte di qualità reel: meglio di `views` perché distingue "guardato 1s" da "guardato 30s" |
 
 Indici: `idx_post_snapshot_post`, `idx_post_snapshot_time`.
+
+**KPI derivati per reel** (calcolati a runtime):
+- **Avg watch in secondi** = `avg_watch_time / 1000` — usalo nei briefing in formato `Ns`. Sotto i 3s = il reel non engaga; sopra i 10s = reach qualificato.
+- **Watch ratio** = `avg_watch_time / video_duration_ms` — non disponibile (IG non espone la durata via API). Se serve, fallback alla durata letta dal `media_url` (costoso, no).
+- Filtro: nei briefing/report che parlano di reel, usa `WHERE p.media_type = 'VIDEO' AND ps.avg_watch_time IS NOT NULL` per escludere reel troppo recenti per cui Meta non ha ancora popolato la metrica.
 
 ### `audience_snapshot`
 Demographics lifetime, catturati ad ogni daily full snapshot.

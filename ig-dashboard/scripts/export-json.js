@@ -59,7 +59,8 @@ async function fetchHistoryFromTurso(postIds) {
     if (postIds.length > 0) {
       const placeholders = postIds.map(() => "?").join(",");
       const res = await db.execute({
-        sql: `SELECT post_id, fetched_at, reach, like_count, comments_count, saved, shares, views
+        sql: `SELECT post_id, fetched_at, reach, like_count, comments_count, saved, shares, views,
+                     video_view_total_time, avg_watch_time
               FROM post_snapshot
               WHERE post_id IN (${placeholders})
               ORDER BY fetched_at ASC`,
@@ -76,6 +77,13 @@ async function fetchHistoryFromTurso(postIds) {
           saved: Number(row.saved) || 0,
           shares: Number(row.shares) || 0,
           views: Number(row.views) || 0,
+          // Reel-only (REELS): null sui non-reel. ms.
+          video_view_total_time:
+            row.video_view_total_time == null
+              ? null
+              : Number(row.video_view_total_time),
+          avg_watch_time:
+            row.avg_watch_time == null ? null : Number(row.avg_watch_time),
         });
       }
     }

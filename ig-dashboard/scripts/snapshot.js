@@ -35,6 +35,7 @@ import {
   fetchAudience,
   fetchStories,
   fetchStoryInsights,
+  fetchReelInsights,
   rangeSinceUntil,
   metricOf,
 } from "./ig-fetch.js";
@@ -56,14 +57,37 @@ async function resolveIgUserId(gql) {
 
 // Scrive post + post_snapshot in una transazione batch. In fresh mode filtra
 // i post alla finestra di FRESH_WINDOW_DAYS (evita di snapshottare post morti).
-async function writePosts(db, posts, fetchedAt, { freshOnly }) {
+//
+// Per i REELS in toWrite fetcha anche ig_reels_video_view_total_time +
+// ig_reels_avg_watch_time (1 chiamata aggiuntiva per reel; metriche reel-only,
+// non possono stare nel batch insights embedded). Concorrenza 8 come stories.
+async function writePosts(db, posts, fetchedAt, { freshOnly, gql }) {
   let toWrite = posts;
   if (freshOnly) {
     const cutoff = Date.now() - FRESH_WINDOW_DAYS * DAY_MS;
     toWrite = posts.filter((p) => new Date(p.timestamp).getTime() >= cutoff);
   }
+
+  // Enrich: reel watch time (REELS-only, graceful fallback a null).
+  const reels = toWrite.filter((p) => p.media_product_type === "REELS");
+  const reelInsights = new Map();
+  if (reels.length && gql) {
+    const concurrency = 8;
+    for (let i = 0; i < reels.length; i += concurrency) {
+      const batch = reels.slice(i, i + concurrency);
+      const results = await Promise.all(
+        batch.map(async (r) => [r.id, await fetchReelInsights(gql, r.id)])
+      );
+      for (const [id, insights] of results) reelInsights.set(id, insights);
+    }
+  }
+
   const statements = [];
   for (const p of toWrite) {
+    const reel = reelInsights.get(p.id) ?? {
+      video_view_total_time: null,
+      avg_watch_time: null,
+    };
     statements.push({
       sql: `INSERT INTO post
             (post_id, timestamp, media_type, caption, permalink, media_url, thumbnail_url, first_seen, last_updated)
@@ -90,8 +114,9 @@ async function writePosts(db, posts, fetchedAt, { freshOnly }) {
     });
     statements.push({
       sql: `INSERT OR REPLACE INTO post_snapshot
-            (post_id, fetched_at, like_count, comments_count, reach, saved, shares, views)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            (post_id, fetched_at, like_count, comments_count, reach, saved, shares, views,
+             video_view_total_time, avg_watch_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         p.id,
         fetchedAt,
@@ -101,6 +126,8 @@ async function writePosts(db, posts, fetchedAt, { freshOnly }) {
         metricOf(p, "saved"),
         metricOf(p, "shares"),
         metricOf(p, "views"),
+        reel.video_view_total_time,
+        reel.avg_watch_time,
       ],
     });
   }
@@ -223,6 +250,7 @@ async function main() {
       ]);
       const written = await writePosts(db, posts, fetchedAt, {
         freshOnly: true,
+        gql,
       });
 
       const summary = {
@@ -295,6 +323,7 @@ async function main() {
     // 2. post + post_snapshot
     const written = await writePosts(db, posts, fetchedAt, {
       freshOnly: false,
+      gql,
     });
 
     // 3. audience_snapshot

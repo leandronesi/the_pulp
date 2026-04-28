@@ -145,7 +145,9 @@ import {
   reachRateTier,
   saveRateTier,
   shareRateTier,
+  watchTimeTier,
   ER_TIERS_LEGEND,
+  WATCH_TIME_TIERS_LEGEND,
   MEDIA_TYPE_LABELS,
   MEDIA_TYPE_COLORS,
   POST_DOT_COLORS,
@@ -635,6 +637,24 @@ export default function App() {
     }));
   }, [enrichedPosts, scatterMeta]);
 
+  // Avg watch time sui reel del periodo, in secondi. Letto dall'ultimo
+  // snapshot post_snapshot via postHistory (Turso). Null se non ci sono reel
+  // nel periodo o se Meta non ha ancora popolato la metrica per i reel più
+  // recenti — la card nasconde il pill in questo caso. Vedi ADR 008.
+  const reelAvgWatchSec = useMemo(() => {
+    const reels = analyzedPosts.filter((p) => p.mediaType === "REELS");
+    if (!reels.length) return null;
+    const samples = [];
+    for (const p of reels) {
+      const hist = postHistory?.[p.id] || [];
+      const last = hist[hist.length - 1];
+      const ms = last?.avg_watch_time;
+      if (ms != null) samples.push(ms / 1000);
+    }
+    if (!samples.length) return null;
+    return samples.reduce((s, v) => s + v, 0) / samples.length;
+  }, [analyzedPosts, postHistory]);
+
   const sortedPosts = useMemo(() => {
     const arr = [...analyzedPosts];
     const cmp = {
@@ -943,7 +963,15 @@ export default function App() {
                 label={`Reels · ${dateRange}g`}
                 value={String(analyzedPosts.filter((p) => p.mediaType === "REELS").length)}
                 accent="from-[#D4A85C] to-[#B8823A]"
-                info={`Numero di reel pubblicati negli ultimi ${dateRange} giorni.`}
+                tier={watchTimeTier(reelAvgWatchSec)}
+                tierLabel={
+                  reelAvgWatchSec != null
+                    ? `watch ${reelAvgWatchSec.toFixed(reelAvgWatchSec >= 10 ? 0 : 1)}s`
+                    : null
+                }
+                legend={reelAvgWatchSec != null ? WATCH_TIME_TIERS_LEGEND : null}
+                legendCurrent={watchTimeTier(reelAvgWatchSec)?.label}
+                info={`Numero di reel pubblicati negli ultimi ${dateRange} giorni. Il pill mostra il tempo di visualizzazione medio (avg_watch_time) sui reel del periodo: <4s = il gancio iniziale non funziona, >15s = la metà di un reel medio è guardata. Richiede l'archivio Turso popolato — i reel troppo recenti possono ancora non avere la metrica.`}
               />
               <KpiCard
                 icon={<Layers size={16} />}

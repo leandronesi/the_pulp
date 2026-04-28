@@ -220,7 +220,7 @@ export function ReachTrio({ data }) {
   );
 }
 
-export function KpiCard({ icon, label, value, accent, deltaPct, tier, tierLabel, sparkline, info }) {
+export function KpiCard({ icon, label, value, accent, deltaPct, tier, tierLabel, sparkline, info, legend, legendCurrent }) {
   return (
     <div className="glass rounded-2xl p-4 sm:p-5 relative overflow-hidden group transition">
       <div
@@ -243,6 +243,31 @@ export function KpiCard({ icon, label, value, accent, deltaPct, tier, tierLabel,
           </span>
         )}
       </div>
+      {legend && legend.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-2">
+          {legend.map((t) => {
+            const isCurrent = t.label === legendCurrent;
+            return (
+              <span
+                key={t.label}
+                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5"
+                style={{
+                  backgroundColor: isCurrent ? `${t.color}20` : `${t.color}10`,
+                  color: t.color,
+                  border: isCurrent ? `1px solid ${t.color}50` : "1px solid transparent",
+                  fontSize: "9px",
+                  fontFamily: "JetBrains Mono",
+                  textTransform: isCurrent ? "uppercase" : "none",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                {t.label}
+                <span style={{ opacity: 0.6, fontFamily: "JetBrains Mono" }}>{t.range}</span>
+              </span>
+            );
+          })}
+        </div>
+      )}
       {sparkline && sparkline.length >= 2 && (
         <div className="mt-3 -mx-1">
           <Sparkline data={sparkline} height={28} interactive />

@@ -155,7 +155,7 @@ Schema identico su entrambi — stesso SQL, stesse query. La scelta del target �
 |---|---|---|---|
 | `daily_snapshot` | 1 riga/giorno | `date` (YYYY-MM-DD Europe/Rome) | Followers, follows, media_count + 5 metriche del giorno (reach, profile_views, website_clicks, accounts_engaged, total_interactions). Idempotente: ri-run dello stesso giorno aggiorna la riga. |
 | `post` | 1 riga/post | `post_id` | Metadata stabile: timestamp, media_type, caption, permalink, URL thumbnail. Aggiornato on-upsert ad ogni snapshot. |
-| `post_snapshot` | N righe/post | `(post_id, fetched_at)` | Metriche variabili nel tempo (like, comments, reach, saved, shares, views). **Ogni fetch crea una nuova riga** → permette di ricostruire la curva di crescita di ogni post. |
+| `post_snapshot` | N righe/post | `(post_id, fetched_at)` | Metriche variabili nel tempo (like, comments, reach, saved, shares, views) + watch time reel-only (`video_view_total_time`, `avg_watch_time` in ms; NULL per non-reel — vedi ADR 008). **Ogni fetch crea una nuova riga** → permette di ricostruire la curva di crescita di ogni post. |
 | `audience_snapshot` | ~20 righe/giorno | `(date, breakdown, key)` | Demographics dei follower — breakdown ∈ {age, gender, city, country}. |
 | `run_log` | 1 riga/esecuzione | auto | Telemetria: quando, che tipo di script, esito, errori. |
 | `meta` | KV | `key` | Valori cacheati: `ig_user_id`, eventuali altri config. |

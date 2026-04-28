@@ -44,6 +44,9 @@ const SCHEMA_STATEMENTS = [
     first_seen INTEGER NOT NULL,
     last_updated INTEGER NOT NULL
   )`,
+  // video_view_total_time / avg_watch_time: in millisecondi, popolati SOLO
+  // per media_product_type=REELS via fetch dedicato (ig_reels_*). NULL per
+  // image/carousel — IG non li espone fuori dal feed reels.
   `CREATE TABLE IF NOT EXISTS post_snapshot (
     post_id TEXT NOT NULL,
     fetched_at INTEGER NOT NULL,
@@ -53,6 +56,8 @@ const SCHEMA_STATEMENTS = [
     saved INTEGER,
     shares INTEGER,
     views INTEGER,
+    video_view_total_time INTEGER,
+    avg_watch_time INTEGER,
     PRIMARY KEY (post_id, fetched_at)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_post_snapshot_post ON post_snapshot(post_id)`,
@@ -146,6 +151,14 @@ export async function getDb() {
     await _db.execute(`ALTER TABLE story_snapshot ADD COLUMN navigation INTEGER`);
   } catch {
     /* colonna gia' esiste, ignora */
+  }
+  // Migration: watch time reel-only su post_snapshot (DB pre-esistenti).
+  for (const col of ["video_view_total_time", "avg_watch_time"]) {
+    try {
+      await _db.execute(`ALTER TABLE post_snapshot ADD COLUMN ${col} INTEGER`);
+    } catch {
+      /* colonna gia' esiste, ignora */
+    }
   }
   return _db;
 }

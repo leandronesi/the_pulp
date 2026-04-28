@@ -206,6 +206,40 @@ export async function fetchAudience(gql, ig) {
 export const metricOf = (post, name) =>
   post.insights?.data?.find((x) => x.name === name)?.values?.[0]?.value ?? 0;
 
+// ─── Reel watch time ─────────────────────────────────────────────────────
+// ig_reels_video_view_total_time + ig_reels_avg_watch_time sono REEL-ONLY
+// (media_product_type === "REELS"). Tornano in millisecondi. Se mischiati
+// con altre metriche nel batch insights embedded, l'intera richiesta fallisce
+// per i post non-reel — quindi fetch dedicato per ogni reel.
+//
+// Ritorna { video_view_total_time, avg_watch_time } in ms, oppure null sui
+// valori non disponibili. Errori graceful: reel troppo vecchi o metriche
+// non ancora popolate da Meta tornano null senza propagare.
+const REEL_METRICS = [
+  "ig_reels_video_view_total_time",
+  "ig_reels_avg_watch_time",
+];
+
+export async function fetchReelInsights(gql, mediaId) {
+  const out = { video_view_total_time: null, avg_watch_time: null };
+  try {
+    const j = await gql(
+      `/${mediaId}/insights?metric=${REEL_METRICS.join(",")}`
+    );
+    for (const m of j.data || []) {
+      const v = m.total_value?.value ?? m.values?.[0]?.value ?? null;
+      if (m.name === "ig_reels_video_view_total_time") {
+        out.video_view_total_time = v == null ? null : Number(v);
+      } else if (m.name === "ig_reels_avg_watch_time") {
+        out.avg_watch_time = v == null ? null : Number(v);
+      }
+    }
+  } catch {
+    /* reel pre-disponibilità metrica o API rotta: lascia null */
+  }
+  return out;
+}
+
 // ─── Stories ─────────────────────────────────────────────────────────────
 // Le stories vivono 24h. Dopo la scadenza Meta tiene gli insights consultabili
 // fino a ~30gg, ma `/{ig}/stories` ritorna SOLO quelle attive (non scadute) —

@@ -12,6 +12,18 @@ Tipi di kind:
 
 ---
 
+## [2026-04-28] decision | Watch time per i reel catturato in `post_snapshot`
+
+L'app IG ufficiale espone `tempo di visualizzazione` totale + medio per ogni reel (in `Insight sul reel`). Noi non li stavamo capturando — giudicavamo i reel solo via reach/ER/views, cieco rispetto a "il reel viene davvero guardato o passa nel feed".
+
+Aggiunte 2 colonne nullable su `post_snapshot`: `video_view_total_time` + `avg_watch_time` (ms). Fetch dedicato per `media_product_type === "REELS"` in [ig-fetch.js#fetchReelInsights](../ig-dashboard/scripts/ig-fetch.js) (le `ig_reels_*` non possono stare nel batch insights embedded — farebbero fallire i carousel/image). Wiring in [snapshot.js#writePosts](../ig-dashboard/scripts/snapshot.js) con concurrency 8 (stesso pattern delle stories).
+
+Costo: ~5 chiamate API extra al giorno (3-5 reel/settimana × 6 fresh run/giorno) — irrilevante rispetto al limite 200/ora.
+
+ADR completa: [decisions/008-reel-watch-time.md](decisions/008-reel-watch-time.md). Display sul dashboard / deep report ancora TBD (la metrica è ora dietro le quinte, le decisioni di UI vengono dopo aver accumulato qualche giorno di curve).
+
+---
+
 ## [2026-04-25] refactor | App.jsx modularizzato (2811 → 1628 righe)
 
 App.jsx aveva superato i 2800 righe — il vincolo "monolitico finché non ingestibile" era stato passato (costo in token quando spawno Sonnet su task ristretti).

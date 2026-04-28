@@ -12,6 +12,18 @@ Tipi di kind:
 
 ---
 
+## [2026-04-29] refactor | Cron fresh orario + daily_snapshot upsert + fix off-by-one
+
+Tre cambi correlati a [ADR 002](decisions/002-fresh-vs-full-snapshot.md) (sezione "Aggiornamento 2026-04-29"):
+
+1. **Cron fresh: 4h → orario** ([.github/workflows/snapshot-fresh.yml](../.github/workflows/snapshot-fresh.yml)). Risoluzione 24 punti/giorno per i reel freschi (era 6) per leggere meglio il "moment of death" della curva. Repo public → GH Actions illimitato, free tier Turso/Meta ampiamente sotto i limiti (~0,04% writes Turso, ~6% Meta).
+2. **Daily upsert orario** ([scripts/snapshot.js](../ig-dashboard/scripts/snapshot.js#L246-L304)). Il cron orario ora aggiorna anche `daily_snapshot` del giorno in corso (range mezzanotte Rome → ora). Helper nuovi `rangeTodaySoFarRome` + `rangeYesterdayRome` in [ig-fetch.js](../ig-dashboard/scripts/ig-fetch.js).
+3. **Fix off-by-one su `daily_snapshot.date`**. Il daily cron a 00:00 Rome etichettava le righe con la data di run invece che con la data del periodo coperto (ieri). Fix: `yesterdayIsoDate()` per il daily, `todayIsoDate()` per l'orario. Migrazione retroattiva one-shot in [scripts/db.js](../ig-dashboard/scripts/db.js) protetta da flag `daily_date_offset_fix_v1` in tabella `meta`.
+
+**Conseguenza per chi legge `daily_snapshot`** (briefing, deep report, follower trend, dashboard sparkline): la query `WHERE date='2026-04-26'` prima ritornava i dati del 25, ora ritorna quelli del 26. Eventuali report già generati hanno numeri giusti ma label off-by-one rispetto al codice nuovo.
+
+---
+
 ## [2026-04-28] decision | Watch time per i reel catturato in `post_snapshot`
 
 L'app IG ufficiale espone `tempo di visualizzazione` totale + medio per ogni reel (in `Insight sul reel`). Noi non li stavamo capturando — giudicavamo i reel solo via reach/ER/views, cieco rispetto a "il reel viene davvero guardato o passa nel feed".

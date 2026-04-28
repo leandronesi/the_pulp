@@ -149,6 +149,14 @@ export function rangeSinceUntil(days) {
   return { since, until };
 }
 
+// Note: provato a usare finestre allineate a mezzanotte Europe/Rome (es.
+// "oggi 00:00 → ora") per fotografare il reach parziale del giorno in corso.
+// Meta restituisce data:[] per finestre <24h o non allineate ai suoi boundary
+// interni di "day" (l'IG account ha boundary fissi nel suo timezone, indipendente
+// dal nostro). Soluzione adottata: usare rangeSinceUntil(1) (rolling 24h)
+// per il cron orario e per il daily — Meta accetta entrambi e restituisce un
+// total_value sensato. Vedi ADR 002 sezione "Aggiornamento 2026-04-29".
+
 export async function fetchReachDaily(gql, ig, sinceUnix, untilUnix) {
   try {
     const j = await gql(

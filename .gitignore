@@ -30,3 +30,6 @@ ig-dashboard/public/data.json
 # Briefing e report generati (output di briefing.js / report-deep.js,
 # contengono dati IG reali e citazioni di caption — fuori dal repo)
 reports/
+
+# Materiale interno non destinato al repo pubblico
+docs/dashboard-intro.html

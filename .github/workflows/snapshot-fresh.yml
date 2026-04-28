@@ -1,14 +1,16 @@
-name: Snapshot IG · fresh every 4h
+name: Snapshot IG · fresh hourly
 
-# Cattura ad alta risoluzione SOLO dei post pubblicati negli ultimi 7 giorni.
-# 6 run/giorno (ogni 4h), così ogni post nuovo ha ~42 punti sulla curva di
-# crescita nella sua prima settimana di vita. I post vecchi fermi non
-# ricevono snapshot (filtro lato script), niente rumore sul DB.
+# Cattura ad alta risoluzione SOLO dei post pubblicati negli ultimi 7 giorni
+# + upsert orario su daily_snapshot del giorno in corso (range mezzanotte
+# Rome → ora). 24 run/giorno = ~168 punti di curva nella prima settimana di
+# vita di un reel + reach account-level aggiornato ogni ora invece che 1×.
+# Costo Turso/Meta: trascurabile (vedi ADR 002).
+# I post fermi (>7gg) non ricevono snapshot (filtro lato script).
 
 on:
   schedule:
-    # 5 minuti dopo l'ora, ogni 4 ore UTC. Offset per non collidere col daily.
-    - cron: '5 */4 * * *'
+    # 5 minuti dopo l'ora, ogni ora UTC. Offset per non collidere col daily.
+    - cron: '5 * * * *'
   workflow_dispatch:
 
 jobs:

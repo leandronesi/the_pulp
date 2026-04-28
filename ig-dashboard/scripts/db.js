@@ -160,6 +160,32 @@ export async function getDb() {
       /* colonna gia' esiste, ignora */
     }
   }
+  // Migration retroattiva (one-shot): fino al 28/04/2026 il daily cron
+  // etichettava le righe `daily_snapshot` con la data del run (00:00 Rome
+  // di oggi) invece che con la data del periodo coperto (ieri). Le righe
+  // esistenti hanno quindi date scorrette di +1 giorno. Shiftiamo tutto di
+  // -1 giorno, una sola volta, segnando il flag in `meta`. Il codice nuovo
+  // userà yesterdayIsoDate() per il daily e todayIsoDate() per l'orario,
+  // entrambi corretti.
+  try {
+    const flag = await _db.execute({
+      sql: "SELECT value FROM meta WHERE key = ?",
+      args: ["daily_date_offset_fix_v1"],
+    });
+    if (!flag.rows.length) {
+      await _db.execute(
+        `UPDATE daily_snapshot SET date = date(date, '-1 day')`
+      );
+      await _db.execute({
+        sql: `INSERT INTO meta (key, value, updated_at) VALUES (?, ?, ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+        args: ["daily_date_offset_fix_v1", "applied", Date.now()],
+      });
+      console.log("[migration] daily_snapshot.date shiftato di -1gg (one-shot fix off-by-one)");
+    }
+  } catch (e) {
+    console.warn(`[migration] daily_date_offset_fix_v1 fallita: ${e.message}`);
+  }
   return _db;
 }
 
@@ -180,6 +206,20 @@ export function todayIsoDate() {
     day: "2-digit",
   });
   return fmt.format(new Date());
+}
+
+// Utility: data di ieri in YYYY-MM-DD (Europe/Rome). Usata dal daily cron per
+// etichettare la riga `daily_snapshot` con la data effettiva del periodo
+// fotografato — quando il cron gira a 00:00 Rome la finestra di metriche è
+// quella del giorno precedente, non di quello in cui parte la run.
+export function yesterdayIsoDate() {
+  const fmt = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Europe/Rome",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return fmt.format(new Date(Date.now() - 24 * 60 * 60 * 1000));
 }
 
 export async function startRunLog(kind) {

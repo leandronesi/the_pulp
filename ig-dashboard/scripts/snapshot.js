@@ -20,6 +20,7 @@ import {
   getDbMode,
   getDbTarget,
   todayIsoDate,
+  yesterdayIsoDate,
   startRunLog,
   endRunLog,
   setMeta,
@@ -208,6 +209,43 @@ async function writeStories(db, gql, igUserId, fetchedAt) {
   return { fetched: stories.length, written: enriched.length, error: null };
 }
 
+// Upsert sulla riga `date` di daily_snapshot. Idempotente: chiamata sia dal
+// daily cron (date=ieri, valori "definitivi" sull'intera giornata appena
+// chiusa) sia dal cron orario (date=oggi, valori parziali che convergono al
+// definitivo a mezzanotte).
+async function upsertDailySnapshot(db, { date, fetchedAt, profile, totals }) {
+  await db.execute({
+    sql: `INSERT INTO daily_snapshot
+          (date, fetched_at, followers_count, follows_count, media_count,
+           reach, profile_views, website_clicks, accounts_engaged, total_interactions, raw_json)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(date) DO UPDATE SET
+            fetched_at = excluded.fetched_at,
+            followers_count = excluded.followers_count,
+            follows_count = excluded.follows_count,
+            media_count = excluded.media_count,
+            reach = excluded.reach,
+            profile_views = excluded.profile_views,
+            website_clicks = excluded.website_clicks,
+            accounts_engaged = excluded.accounts_engaged,
+            total_interactions = excluded.total_interactions,
+            raw_json = excluded.raw_json`,
+    args: [
+      date,
+      fetchedAt,
+      profile.followers_count ?? null,
+      profile.follows_count ?? null,
+      profile.media_count ?? null,
+      totals.reach ?? null,
+      totals.profile_views ?? null,
+      totals.website_clicks ?? null,
+      totals.accounts_engaged ?? null,
+      totals.total_interactions ?? null,
+      JSON.stringify({ profile, totals }),
+    ],
+  });
+}
+
 async function main() {
   if (isFakeToken(TOKEN)) {
     const msg =
@@ -232,7 +270,6 @@ async function main() {
   console.log(`Mode: ${mode}`);
 
   const runId = await startRunLog(FRESH_ONLY ? "snapshot-fresh" : "snapshot");
-  const date = todayIsoDate();
   const fetchedAt = Date.now();
   let fbErrors = [];
 
@@ -242,12 +279,31 @@ async function main() {
     console.log(`IG User ID: ${igUserId}`);
 
     if (FRESH_ONLY) {
-      // ── Fresh mode: post recenti + stories attive (cron 4h cattura ─
-      // entrambi prima della scadenza 24h delle stories).
-      const [{ posts }, storiesResult] = await Promise.all([
+      // ── Fresh mode (cron orario): ─────────────────────────────────
+      //   • post recenti (last 7gg) → post + post_snapshot
+      //   • stories attive (Meta le tiene 24h)
+      //   • daily_snapshot di OGGI in upsert con finestra rolling 24h.
+      // Nota: Meta ritorna null per finestre <24h non allineate ai suoi
+      // boundary giornalieri, quindi NON possiamo chiedere "midnight Rome →
+      // ora" (testato — ritorna data:[]). Usiamo rolling 24h: il valore
+      // rappresenta "reach delle ultime 24h al momento della run", una buona
+      // proxy che converge al canonical calendar day quando il cron daily
+      // riscrive la riga a mezzanotte Rome.
+      // Audience NON aggiornata qui (resolution daily basta).
+      const date = todayIsoDate();
+      const { since, until } = rangeSinceUntil(1);
+      const [profile, totalsResp, mediaResp, storiesResult] = await Promise.all([
+        fetchProfile(gql, igUserId),
+        fetchDayTotals(gql, igUserId, since, until),
         fetchMedia(gql, igUserId, 30),
         writeStories(db, gql, igUserId, fetchedAt),
       ]);
+      const { totals, errors: totErr } = totalsResp;
+      fbErrors = [...fbErrors, ...totErr];
+      if (mediaResp.error) fbErrors.push(`media insights: ${mediaResp.error}`);
+      const posts = mediaResp.posts;
+
+      await upsertDailySnapshot(db, { date, fetchedAt, profile, totals });
       const written = await writePosts(db, posts, fetchedAt, {
         freshOnly: true,
         gql,
@@ -256,23 +312,37 @@ async function main() {
       const summary = {
         mode: "fresh-only",
         window_days: FRESH_WINDOW_DAYS,
+        daily_date: date,
         posts_fetched: posts.length,
         posts_written: written,
         stories_fetched: storiesResult.fetched,
         stories_written: storiesResult.written,
         stories_error: storiesResult.error,
+        followers: profile.followers_count,
+        reach_today: totals.reach ?? null,
+        metric_errors: fbErrors.length,
       };
       console.log("OK snapshot:");
       console.log(JSON.stringify(summary, null, 2));
+      if (fbErrors.length) {
+        console.warn("\nMetriche fallite (non fatali):");
+        for (const e of fbErrors) console.warn(` · ${e}`);
+      }
 
       await endRunLog(runId, {
-        status: "ok",
+        status: fbErrors.length ? "partial" : "ok",
         summary: JSON.stringify(summary),
       });
       return;
     }
 
-    // ── Full mode: profilo, totali, audience, tutti i post ────────
+    // ── Full mode (cron daily 22:00 UTC = 00:00 Rome): ──────────────
+    // Il cron parte appena scoccata mezzanotte Rome → rolling 24h finisce
+    // proprio sul boundary del calendar day appena chiuso. Etichettiamo la
+    // riga con la data di IERI perché è quello che la riga rappresenta
+    // (la giornata appena chiusa), non il giorno di run.
+    // Audience qui (resolution daily basta).
+    const date = yesterdayIsoDate();
     const { since, until } = rangeSinceUntil(1);
     const [profile, totalsResp, mediaResp, audience] = await Promise.all([
       fetchProfile(gql, igUserId),
@@ -289,36 +359,7 @@ async function main() {
     const posts = mediaResp.posts;
 
     // 1. daily_snapshot (upsert per data)
-    await db.execute({
-      sql: `INSERT INTO daily_snapshot
-            (date, fetched_at, followers_count, follows_count, media_count,
-             reach, profile_views, website_clicks, accounts_engaged, total_interactions, raw_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(date) DO UPDATE SET
-              fetched_at = excluded.fetched_at,
-              followers_count = excluded.followers_count,
-              follows_count = excluded.follows_count,
-              media_count = excluded.media_count,
-              reach = excluded.reach,
-              profile_views = excluded.profile_views,
-              website_clicks = excluded.website_clicks,
-              accounts_engaged = excluded.accounts_engaged,
-              total_interactions = excluded.total_interactions,
-              raw_json = excluded.raw_json`,
-      args: [
-        date,
-        fetchedAt,
-        profile.followers_count ?? null,
-        profile.follows_count ?? null,
-        profile.media_count ?? null,
-        totals.reach ?? null,
-        totals.profile_views ?? null,
-        totals.website_clicks ?? null,
-        totals.accounts_engaged ?? null,
-        totals.total_interactions ?? null,
-        JSON.stringify({ profile, totals }),
-      ],
-    });
+    await upsertDailySnapshot(db, { date, fetchedAt, profile, totals });
 
     // 2. post + post_snapshot
     const written = await writePosts(db, posts, fetchedAt, {

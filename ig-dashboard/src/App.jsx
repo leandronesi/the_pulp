@@ -138,6 +138,7 @@ import {
   fmt,
   fmtPct,
   fmtDate,
+  fmtDuration,
   delta,
 } from "./utils/format.js";
 import {
@@ -637,22 +638,32 @@ export default function App() {
     }));
   }, [enrichedPosts, scatterMeta]);
 
-  // Avg watch time sui reel del periodo, in secondi. Letto dall'ultimo
-  // snapshot post_snapshot via postHistory (Turso). Null se non ci sono reel
-  // nel periodo o se Meta non ha ancora popolato la metrica per i reel più
-  // recenti — la card nasconde il pill in questo caso. Vedi ADR 008.
-  const reelAvgWatchSec = useMemo(() => {
+  // Avg watch time sui reel del periodo (s) + total view time accumulato (ms).
+  // Letti dall'ultimo snapshot post_snapshot via postHistory (Turso). Null se
+  // non ci sono reel nel periodo o se Meta non ha ancora popolato la metrica
+  // per i reel più recenti — la card nasconde il pill/valore in questo caso.
+  // Vedi ADR 008.
+  const { reelAvgWatchSec, reelTotalWatchMs } = useMemo(() => {
     const reels = analyzedPosts.filter((p) => p.mediaType === "REELS");
-    if (!reels.length) return null;
-    const samples = [];
+    if (!reels.length) return { reelAvgWatchSec: null, reelTotalWatchMs: null };
+    const avgSamples = [];
+    let totalMs = 0;
+    let totalCount = 0;
     for (const p of reels) {
       const hist = postHistory?.[p.id] || [];
       const last = hist[hist.length - 1];
-      const ms = last?.avg_watch_time;
-      if (ms != null) samples.push(ms / 1000);
+      if (last?.avg_watch_time != null) avgSamples.push(last.avg_watch_time / 1000);
+      if (last?.video_view_total_time != null) {
+        totalMs += last.video_view_total_time;
+        totalCount += 1;
+      }
     }
-    if (!samples.length) return null;
-    return samples.reduce((s, v) => s + v, 0) / samples.length;
+    return {
+      reelAvgWatchSec: avgSamples.length
+        ? avgSamples.reduce((s, v) => s + v, 0) / avgSamples.length
+        : null,
+      reelTotalWatchMs: totalCount ? totalMs : null,
+    };
   }, [analyzedPosts, postHistory]);
 
   const sortedPosts = useMemo(() => {
@@ -933,7 +944,7 @@ export default function App() {
               <Tabs.Content value="overview" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">
 
             {/* Hero KPIs */}
-            <section className="grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-4 gap-4 mb-10 fadein">
+            <section className="grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-10 fadein">
               <KpiCard
                 icon={<Users size={16} />}
                 label="Followers"
@@ -972,6 +983,13 @@ export default function App() {
                 legend={reelAvgWatchSec != null ? WATCH_TIME_TIERS_LEGEND : null}
                 legendCurrent={watchTimeTier(reelAvgWatchSec)?.label}
                 info={`Numero di reel pubblicati negli ultimi ${dateRange} giorni. Il pill mostra il tempo di visualizzazione medio (avg_watch_time) sui reel del periodo: <4s = il gancio iniziale non funziona, >15s = la metà di un reel medio è guardata. Richiede l'archivio Turso popolato — i reel troppo recenti possono ancora non avere la metrica.`}
+              />
+              <KpiCard
+                icon={<Clock size={16} />}
+                label={`Tempo reel · ${dateRange}g`}
+                value={reelTotalWatchMs != null ? fmtDuration(reelTotalWatchMs) : "—"}
+                accent="from-[#B8823A] to-[#7FB3A3]"
+                info={`Tempo totale che le persone hanno passato a guardare i tuoi reel del periodo (somma di video_view_total_time dell'ultimo snapshot di ogni reel). Numero che IG mostra dentro "Insight sul reel". Più alto = più attenzione catturata in totale, indipendentemente dal numero di reel.`}
               />
               <KpiCard
                 icon={<Layers size={16} />}

@@ -31,3 +31,16 @@ export const delta = (cur, prev) => {
   if (cur == null || prev == null || prev === 0) return null;
   return ((cur - prev) / prev) * 100;
 };
+
+// Durata in ms → "4h 29m" / "29m 42s" / "42s" — match con la UI insight di IG.
+// Sotto i 60s mostra solo i secondi; sopra l'ora droppa i secondi (ridondanti).
+export const fmtDuration = (ms) => {
+  if (ms == null || Number.isNaN(ms) || ms < 0) return "—";
+  const total = Math.round(ms / 1000);
+  if (total < 60) return `${total}s`;
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m ${s}s`;
+};

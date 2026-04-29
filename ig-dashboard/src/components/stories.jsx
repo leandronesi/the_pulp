@@ -178,6 +178,7 @@ export function StoriesTab({ stories, storyHistory, followersCount }) {
                 ? ((aggregates.count - prevAggregates.count) / prevAggregates.count) * 100
                 : null
             }
+            info={`Numero di stories pubblicate negli ultimi ${windowDays}g. La cadenza è metà del gioco: IG premia chi resta visibile in cima al feed delle stories. Pause lunghe = reach medio crolla. Vedi delta vs ${windowDays}g precedenti.`}
           />
           <StoryKpi
             label="REACH MEDIO"
@@ -197,6 +198,7 @@ export function StoriesTab({ stories, storyHistory, followersCount }) {
                 ? storyReachRateTier((aggregates.reachAvg / followersCount) * 100)
                 : null
             }
+            info="Account UNICI che vedono in media ogni story (dedupe per story, non per periodo). Il pill mostra la quota sui follower: <10% = low, 10-25% = normal, 25-50% = strong, >50% = viral. IG di base mostra le stories al 5-15% dei follower; sopra al 25% sei sopra media."
           />
           <StoryKpi
             label="REPLY RATE"
@@ -208,12 +210,14 @@ export function StoriesTab({ stories, storyHistory, followersCount }) {
                 : null
             }
             tier={storyReplyRateTier(aggregates.replyRate)}
+            info="Risposte via DM (sticker o reply diretto allo story) divise per reach × 100. Il reply via DM è high-effort: aprire la chat e scrivere costa tempo. Per questo anche 1% è un segnale forte di affinità — la maggior parte delle audience guarda e va via in silenzio. >1.5% = forte, 0.5-1.5% = medio, <0.5% = basso."
           />
           <StoryKpi
             label="NAVIGATION / REACH"
             value={aggregates.navRate.toFixed(2) + "×"}
             sublabel="azioni di navigazione per visione"
             tier={storyNavRateTier(aggregates.navRate)}
+            info="Somma delle azioni di navigazione (tap-forward per skippare, tap-back per rivedere, swipe via, salto al prossimo account) divisa per reach. Letta da sola è ambigua: alta vuol dire 'audience attiva' MA può significare sia interazione sana (rivedere, swipe-up) sia exit precoce. Va incrociata col reply rate: nav alta + reply bassi = i frame iniziali non agganciano e la gente fugge; nav alta + reply alti = audience che esplora e poi reagisce."
           />
         </section>
       )}
@@ -447,11 +451,12 @@ function computeDropOff(story, history) {
 
 // ─── KPI tile (unchanged interface, ora supporta deltaPct) ───────────────
 
-export function StoryKpi({ label, value, sublabel, tier, deltaPct }) {
+export function StoryKpi({ label, value, sublabel, tier, deltaPct, info }) {
   return (
     <div className="glass rounded-2xl p-4 flex flex-col gap-1">
-      <div className="text-[10px] mono-font tracking-wider text-white/40 uppercase">
-        {label}
+      <div className="flex items-center gap-1.5 text-[10px] mono-font tracking-wider text-white/40 uppercase">
+        <span>{label}</span>
+        {info && <InfoTip text={info} side="bottom" />}
       </div>
       <div className="display-font text-2xl text-white font-light">{value}</div>
       {sublabel && (

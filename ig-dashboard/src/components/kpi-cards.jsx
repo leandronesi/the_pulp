@@ -220,7 +220,7 @@ export function ReachTrio({ data }) {
   );
 }
 
-export function KpiCard({ icon, label, value, accent, deltaPct, tier, tierLabel, sparkline, info, legend, legendCurrent }) {
+export function KpiCard({ icon, label, value, accent, deltaPct, tier, tierLabel, sparkline, info, legend, legendCurrent, subtitle }) {
   return (
     <div className="glass rounded-2xl p-4 sm:p-5 relative overflow-hidden group transition">
       <div
@@ -232,6 +232,11 @@ export function KpiCard({ icon, label, value, accent, deltaPct, tier, tierLabel,
         {info && <InfoTip text={info} side="bottom" />}
       </div>
       <div className="display-font text-3xl sm:text-4xl text-white font-light break-words">{value}</div>
+      {subtitle && (
+        <div className="mt-1 text-[10px] mono-font text-white/45 tabular-nums">
+          {subtitle}
+        </div>
+      )}
       <div className="mt-2 flex items-center gap-2 flex-wrap">
         {deltaPct != null && <DeltaPill value={deltaPct} />}
         {tier && (

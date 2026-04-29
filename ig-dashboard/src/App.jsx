@@ -638,86 +638,74 @@ export default function App() {
     }));
   }, [enrichedPosts, scatterMeta]);
 
-  // Avg watch time sui reel del periodo (s) + total view time accumulato (ms)
-  // DURANTE il periodo selezionato.
+  // Avg watch time sui reel del periodo (s) + total view time OSSERVATO nel
+  // periodo (ms) + count reel pubblicati.
   //
-  // - Avg: media degli avg_watch_time dei reel pubblicati nel periodo (qualità
-  //   media dei reel publicati in finestra). avg_watch_time è una media
-  //   lifetime per-reel, quindi per reel publicati in-periodo coincide con la
-  //   media in-periodo.
-  // - Total: somma dei delta video_view_total_time (cumulativo lifetime) tra
-  //   inizio e fine del periodo, su TUTTI i reel — anche quelli pubblicati
-  //   prima del periodo che continuano a girare. Baseline = ultimo snapshot
-  //   a t ≤ sinceMs (0 se il reel è stato pubblicato in periodo). Stesso
-  //   pattern di "Reach del periodo" lato account: misura attenzione
-  //   guadagnata nel periodo, non patrimonio lifetime.
+  // - Avg: media degli avg_watch_time dei reel pubblicati nel periodo.
+  // - Total: somma dei delta video_view_total_time CHE ABBIAMO OSSERVATO sui
+  //   nostri snapshot nel periodo. Per ogni reel: delta = ultimo snapshot
+  //   non-null in periodo MENO primo snapshot non-null in periodo. Niente
+  //   baseline=0 inferita: se non abbiamo snapshot pre-periodo (o pre-
+  //   pubblicazione) il watch time accumulato prima del primo snapshot non
+  //   viene mai contato. Onesto, undercount visibile finché non maturiamo
+  //   abbastanza storia. Tra ~7 giorni di cron orario, l'undercount si
+  //   azzera per qualunque reel attivo.
+  // - Reel count: numero di reel pubblicati nel periodo (informativo, dà
+  //   scala al totale: 6h da 2 reel ≠ 6h da 10).
   // Vedi ADR 008.
-  const { reelAvgWatchSec, reelTotalWatchMs } = useMemo(() => {
-    // Avg sui reel pubblicati nel periodo
-    const reelsInPeriod = analyzedPosts.filter((p) => p.mediaType === "REELS");
-    const avgSamples = [];
-    for (const p of reelsInPeriod) {
-      const hist = postHistory?.[p.id] || [];
-      const last = hist[hist.length - 1];
-      if (last?.avg_watch_time != null) avgSamples.push(last.avg_watch_time / 1000);
-    }
-    const avg = avgSamples.length
-      ? avgSamples.reduce((s, v) => s + v, 0) / avgSamples.length
-      : null;
+  const { reelAvgWatchSec, reelTotalWatchMs, reelTotalPlays, reelPublishedCount } =
+    useMemo(() => {
+      const reelsInPeriod = analyzedPosts.filter((p) => p.mediaType === "REELS");
 
-    // Total = somma dei delta in-periodo su tutti i reel disponibili.
-    //
-    // Sottigliezza: la metrica video_view_total_time è stata aggiunta a fine
-    // aprile 2026 — gli snapshot precedenti hanno NULL. Se per un reel
-    // pubblicato prima del periodo non abbiamo nessun pre-snapshot non-null,
-    // useremmo baseline=0 e sovraccontaremmo l'intero lifetime. Casi:
-    //   1) reel pubblicato in-periodo → baseline = 0 (corretto, non esisteva)
-    //   2) reel pubblicato prima + snapshot non-null a t ≤ sinceMs → quel valore
-    //   3) reel pubblicato prima ma metrica popolata solo dopo sinceMs →
-    //      baseline = primo snapshot non-null (best-effort onesto: il delta
-    //      reale sarà più alto del nostro, undercount accettabile)
-    //   4) reel senza nessuno snapshot non-null → skip (non sappiamo nulla)
-    const sinceMs = sinceUnix * 1000;
-    const untilMs = untilUnix * 1000;
-    let totalDeltaMs = 0;
-    let contributingReels = 0;
-    for (const p of posts) {
-      if (resolveMediaType(p) !== "REELS") continue;
-      const hist = postHistory?.[p.id] || [];
-      if (!hist.length) continue;
-
-      let lastVal = null;
-      let baseline = null;
-      let firstNonNull = null;
-      for (const e of hist) {
-        if (e.t > untilMs) break;
-        if (e.video_view_total_time == null) continue;
-        if (firstNonNull == null) firstNonNull = e.video_view_total_time;
-        lastVal = e.video_view_total_time;
-        if (e.t <= sinceMs) baseline = e.video_view_total_time;
+      // Avg sui reel pubblicati nel periodo (qualità media)
+      const avgSamples = [];
+      for (const p of reelsInPeriod) {
+        const hist = postHistory?.[p.id] || [];
+        const last = hist[hist.length - 1];
+        if (last?.avg_watch_time != null) avgSamples.push(last.avg_watch_time / 1000);
       }
-      if (lastVal == null) continue;
+      const avg = avgSamples.length
+        ? avgSamples.reduce((s, v) => s + v, 0) / avgSamples.length
+        : null;
 
-      const publishedTs = new Date(p.timestamp).getTime();
-      const publishedInPeriod = publishedTs >= sinceMs;
+      // Total OSSERVATO: somma di (lastObs - firstObs) su tutti i reel attivi
+      // nel periodo (= che hanno ≥1 snapshot non-null con t ≤ untilMs).
+      const sinceMs = sinceUnix * 1000;
+      const untilMs = untilUnix * 1000;
+      let totalDeltaMs = 0;
+      let contributingReels = 0;
+      let totalPlays = 0;
+      for (const p of posts) {
+        if (resolveMediaType(p) !== "REELS") continue;
+        const hist = postHistory?.[p.id] || [];
+        if (!hist.length) continue;
 
-      let baselineFinal;
-      if (publishedInPeriod) baselineFinal = 0;
-      else if (baseline != null) baselineFinal = baseline;
-      else if (firstNonNull != null) baselineFinal = firstNonNull;
-      else continue;
-
-      const delta = lastVal - baselineFinal;
-      if (delta > 0) {
-        totalDeltaMs += delta;
-        contributingReels += 1;
+        let firstObs = null;
+        let lastObs = null;
+        let lastViews = 0;
+        for (const e of hist) {
+          if (e.t > untilMs) break;
+          if (e.video_view_total_time == null) continue;
+          if (firstObs == null) firstObs = e.video_view_total_time;
+          lastObs = e.video_view_total_time;
+          lastViews = e.views || 0;
+        }
+        if (lastObs == null || firstObs == null) continue;
+        const delta = lastObs - firstObs;
+        if (delta > 0) {
+          totalDeltaMs += delta;
+          contributingReels += 1;
+          totalPlays += lastViews;
+        }
       }
-    }
-    return {
-      reelAvgWatchSec: avg,
-      reelTotalWatchMs: contributingReels ? totalDeltaMs : null,
-    };
-  }, [analyzedPosts, posts, postHistory, sinceUnix, untilUnix]);
+
+      return {
+        reelAvgWatchSec: avg,
+        reelTotalWatchMs: contributingReels ? totalDeltaMs : null,
+        reelTotalPlays: contributingReels ? totalPlays : null,
+        reelPublishedCount: reelsInPeriod.length,
+      };
+    }, [analyzedPosts, posts, postHistory, sinceUnix, untilUnix]);
 
   const sortedPosts = useMemo(() => {
     const arr = [...analyzedPosts];
@@ -1041,8 +1029,16 @@ export default function App() {
                 icon={<Clock size={16} />}
                 label={`Tempo reel · ${dateRange}g`}
                 value={reelTotalWatchMs != null ? fmtDuration(reelTotalWatchMs) : "—"}
+                subtitle={(() => {
+                  const parts = [];
+                  parts.push(`${reelPublishedCount} reel pubblicati`);
+                  if (reelTotalPlays != null && reelTotalPlays > 0) {
+                    parts.push(`${fmt(reelTotalPlays)} plays`);
+                  }
+                  return parts.join(" · ");
+                })()}
                 accent="from-[#B8823A] to-[#7FB3A3]"
-                info={`Tempo totale che le persone hanno passato a guardare i tuoi reel NEGLI ULTIMI ${dateRange} GIORNI — anche reel più vecchi che continuano a generare watch time contribuiscono col delta in-periodo. Calcolato come differenza di video_view_total_time tra inizio e fine periodo per ogni reel. Stesso pattern di "Reach del periodo".`}
+                info={`Watch time OSSERVATO nel periodo: somma dei delta video_view_total_time tra il primo e l'ultimo snapshot di ogni reel attivo. Onesto: non includiamo watch precedente al primo snapshot disponibile (la metrica esiste solo da fine aprile 2026, gli snapshot vecchi hanno NULL). Tra ~7 giorni di cron orario sarà = al lifetime per qualunque reel attivo. Sotto: numero di reel pubblicati in periodo + plays totali (= "su quanti contenuti e con quante riproduzioni si è generato questo watch").`}
               />
               <KpiCard
                 icon={<Layers size={16} />}

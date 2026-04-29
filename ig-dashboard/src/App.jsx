@@ -1626,7 +1626,11 @@ export default function App() {
               </Tabs.Content>
 
               <Tabs.Content value="stories" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">
-                <StoriesTab stories={stories} storyHistory={storyHistory} />
+                <StoriesTab
+                  stories={stories}
+                  storyHistory={storyHistory}
+                  followersCount={account?.followers_count}
+                />
               </Tabs.Content>
 
               <Tabs.Content value="audience" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">

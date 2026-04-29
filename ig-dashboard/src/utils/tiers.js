@@ -53,6 +53,41 @@ export const watchTimeTier = (sec) => {
   return { label: "poor", color: "#D98B6F" };
 };
 
+// ─── Tier specifici stories ───────────────────────────────────────────────
+// Le stories sono effimere (24h vita) → benchmark diversi dai post.
+
+// Story reach RATE (reach/follower × 100). IG mostra in media le stories al
+// 5–15% dei follower; sopra al 25% sei "above average", >50% è raro.
+export const storyReachRateTier = (rate) => {
+  if (rate == null || Number.isNaN(rate)) return null;
+  if (rate > 50) return { label: "viral", color: "#EDE5D0" };
+  if (rate >= 25) return { label: "strong", color: "#7FB3A3" };
+  if (rate >= 10) return { label: "normal", color: "#D4A85C" };
+  return { label: "low", color: "#D98B6F" };
+};
+
+// Reply rate stories: replies/reach × 100. Reply via DM è high-effort,
+// >1.5% è veramente alto, sopra 0.5% già segnale forte.
+export const storyReplyRateTier = (rate) => {
+  if (rate == null || Number.isNaN(rate)) return null;
+  if (rate > 1.5) return { label: "forte", color: "#7FB3A3" };
+  if (rate >= 0.5) return { label: "medio", color: "#D4A85C" };
+  return { label: "basso", color: "#D98B6F" };
+};
+
+// Navigation/reach: somma delle azioni di navigazione (tap-forward, tap-back,
+// exits, next-story) per visione. >2× = audience molto attiva (skip o
+// interazione); <0.5× = la story viene guardata e basta, niente azione.
+// Ambiguo come segnale: alto può essere positivo (navigazione interna) o
+// negativo (exit immediati). Va letto col reply rate per disambiguare.
+export const storyNavRateTier = (rate) => {
+  if (rate == null || Number.isNaN(rate)) return null;
+  if (rate > 2) return { label: "molto attiva", color: "#7FB3A3" };
+  if (rate >= 1) return { label: "attiva", color: "#D4A85C" };
+  if (rate >= 0.5) return { label: "passiva", color: "#D98B6F" };
+  return { label: "molto passiva", color: "#D98B6F" };
+};
+
 // ─── Tier arrays per la Legenda ──────────────────────────────────────────
 // Stesse soglie delle funzioni sopra, ordinate dal peggiore al migliore.
 

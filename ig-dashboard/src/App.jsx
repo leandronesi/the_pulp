@@ -653,8 +653,13 @@ export default function App() {
   // - Reel count: numero di reel pubblicati nel periodo (informativo, dà
   //   scala al totale: 6h da 2 reel ≠ 6h da 10).
   // Vedi ADR 008.
-  const { reelAvgWatchSec, reelTotalWatchMs, reelTotalPlays, reelPublishedCount } =
-    useMemo(() => {
+  const {
+    reelAvgWatchSec,
+    reelTotalWatchMs,
+    reelTotalPlays,
+    reelPublishedCount,
+    reelObservedSinceTs,
+  } = useMemo(() => {
       const reelsInPeriod = analyzedPosts.filter((p) => p.mediaType === "REELS");
 
       // Avg sui reel pubblicati nel periodo (qualità media)
@@ -675,6 +680,11 @@ export default function App() {
       let totalDeltaMs = 0;
       let contributingReels = 0;
       let totalPlays = 0;
+      // Earliest observation: il `firstObs` più vecchio tra i reel attivi.
+      // Se è dentro il periodo richiesto significa che la finestra coperta
+      // dai nostri snapshot è più stretta del label "ultimi N giorni" — il
+      // subtitle dovrà mostrare "dal DD MMM" per onestà.
+      let earliestObsTs = null;
       for (const p of posts) {
         if (resolveMediaType(p) !== "REELS") continue;
         const hist = postHistory?.[p.id] || [];
@@ -686,6 +696,7 @@ export default function App() {
         // osservazione in periodo".
         let firstObs = null;
         let firstViews = null;
+        let firstObsTs = null;
         let lastObs = null;
         let lastViews = null;
         for (const e of hist) {
@@ -694,6 +705,7 @@ export default function App() {
           if (firstObs == null) {
             firstObs = e.video_view_total_time;
             firstViews = e.views || 0;
+            firstObsTs = e.t;
           }
           lastObs = e.video_view_total_time;
           lastViews = e.views || 0;
@@ -705,6 +717,9 @@ export default function App() {
           totalDeltaMs += deltaMs;
           contributingReels += 1;
           if (deltaViews > 0) totalPlays += deltaViews;
+          if (earliestObsTs == null || firstObsTs < earliestObsTs) {
+            earliestObsTs = firstObsTs;
+          }
         }
       }
 
@@ -713,6 +728,10 @@ export default function App() {
         reelTotalWatchMs: contributingReels ? totalDeltaMs : null,
         reelTotalPlays: contributingReels ? totalPlays : null,
         reelPublishedCount: reelsInPeriod.length,
+        // Solo se la prima osservazione è DOPO l'inizio del periodo richiesto:
+        // segnale che il numero copre meno giorni di quanti il label dichiari.
+        reelObservedSinceTs:
+          earliestObsTs != null && earliestObsTs > sinceMs ? earliestObsTs : null,
       };
     }, [analyzedPosts, posts, postHistory, sinceUnix, untilUnix]);
 
@@ -1043,6 +1062,9 @@ export default function App() {
                   parts.push(`${reelPublishedCount} reel pubblicati`);
                   if (reelTotalPlays != null && reelTotalPlays > 0) {
                     parts.push(`${fmt(reelTotalPlays)} plays`);
+                  }
+                  if (reelObservedSinceTs != null) {
+                    parts.push(`dal ${fmtDate(reelObservedSinceTs)}`);
                   }
                   return parts.join(" · ");
                 })()}

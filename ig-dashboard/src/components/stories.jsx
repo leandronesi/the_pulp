@@ -544,34 +544,56 @@ export function StoryRow({ story, history, avgReach }) {
           )}
           {perStoryTier && (
             <span
-              className="inline-flex items-center rounded-full px-2 py-0.5 text-[9px] mono-font uppercase tracking-wider"
+              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] mono-font uppercase tracking-wider"
               style={{
                 backgroundColor: perStoryTier.color + "20",
                 color: perStoryTier.color,
               }}
             >
               {perStoryTier.label}
+              <InfoTip
+                text={`Confronto del reach di questa story (${story.reach}) con la media del periodo (${Math.round(avgReach)}). Ratio ${reachRatio.toFixed(2)}×: ≥1.3 = forte, 0.8-1.3 = media, <0.8 = fiacca. Serve a leggere la singola story senza dover ricordare la media a memoria.`}
+                side="top"
+              />
             </span>
           )}
           {dropOffLabel && !isLive && (
-            <span className="text-[10px] mono-font text-white/40">
+            <span className="inline-flex items-center gap-1 text-[10px] mono-font text-white/40">
               · {dropOffLabel}
+              <InfoTip
+                text="Ora dalla pubblicazione in cui il reach ha raggiunto il 90% del valore finale = quando la story ha smesso di crescere significativamente. Sotto le 4h = saturazione veloce (la story esaurisce subito chi la vedrà), sopra le 12h = continua a raccogliere reach a lungo (raro su account piccoli, segnale forte)."
+                side="top"
+              />
             </span>
           )}
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-4 gap-y-1 mt-1">
-          <StoryMetric label="reach" value={story.reach} />
           <StoryMetric
-            label="replies"
+            label="account unici"
+            value={story.reach}
+            info="Account unici che hanno visto questa story. Dedupe automatico Meta: chi la vede 3 volte conta 1."
+          />
+          <StoryMetric
+            label="risposte DM"
             value={story.replies}
             sub={replyRate ? replyRate.toFixed(1) + "%" : null}
+            info={`Risposte ricevute via DM (sticker domanda, reply diretto allo story). Il "${replyRate ? replyRate.toFixed(1) + "%" : "0%"}" è il reply rate (replies/reach). Aprire la chat e scrivere è high-effort: anche 1% è un segnale forte di affinità.`}
           />
-          <StoryMetric label="nav" value={story.navigation} />
-          <StoryMetric label="shares" value={story.shares} />
           <StoryMetric
-            label="inter"
+            label="navigazione"
+            value={story.navigation}
+            info="Somma delle azioni di navigazione: tap-forward (skip), tap-back (rivedi), swipe via, salto al prossimo account. Numero ambiguo: alto può essere positivo (audience attiva, rivede) o negativo (exit). Va incrociato col reply rate per disambiguare."
+          />
+          <StoryMetric
+            label="condivisioni"
+            value={story.shares}
+            info="Quante volte la story è stata mandata in DM ad altri account. Metrica zero-inflated sulle stories: anche 1 share è notevole."
+          />
+          <StoryMetric
+            label="interazioni"
             value={story.total_interactions}
             sub={interRate ? interRate.toFixed(1) + "%" : null}
+            info={`Aggregato di TUTTE le interazioni dirette (replies + reactions + altre). Il "${interRate ? interRate.toFixed(1) + "%" : "0%"}" è interactions/reach × 100. Diverso dal reply rate perche' include anche reazioni rapide (heart, like) che richiedono meno effort.`}
           />
         </div>
       </div>
@@ -596,10 +618,13 @@ export function StoryRow({ story, history, avgReach }) {
   );
 }
 
-export function StoryMetric({ label, value, sub }) {
+export function StoryMetric({ label, value, sub, info }) {
   return (
     <div>
-      <div className="text-[10px] mono-font text-white/40 uppercase">{label}</div>
+      <div className="flex items-center gap-1 text-[10px] mono-font text-white/40 uppercase">
+        <span>{label}</span>
+        {info && <InfoTip text={info} side="top" />}
+      </div>
       <div className="text-sm text-white">
         {value ?? "—"}
         {sub && <span className="text-white/40 text-[10px] mono-font ml-1">{sub}</span>}

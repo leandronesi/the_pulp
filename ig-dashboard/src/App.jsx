@@ -680,22 +680,31 @@ export default function App() {
         const hist = postHistory?.[p.id] || [];
         if (!hist.length) continue;
 
+        // Track sia vtt sia views sullo stesso paio di snapshot (firstObs/lastObs)
+        // così il delta dei plays è coerente col delta del watch time —
+        // entrambi rappresentano "guadagnato durante la nostra finestra di
+        // osservazione in periodo".
         let firstObs = null;
+        let firstViews = null;
         let lastObs = null;
-        let lastViews = 0;
+        let lastViews = null;
         for (const e of hist) {
           if (e.t > untilMs) break;
           if (e.video_view_total_time == null) continue;
-          if (firstObs == null) firstObs = e.video_view_total_time;
+          if (firstObs == null) {
+            firstObs = e.video_view_total_time;
+            firstViews = e.views || 0;
+          }
           lastObs = e.video_view_total_time;
           lastViews = e.views || 0;
         }
         if (lastObs == null || firstObs == null) continue;
-        const delta = lastObs - firstObs;
-        if (delta > 0) {
-          totalDeltaMs += delta;
+        const deltaMs = lastObs - firstObs;
+        const deltaViews = (lastViews || 0) - (firstViews || 0);
+        if (deltaMs > 0) {
+          totalDeltaMs += deltaMs;
           contributingReels += 1;
-          totalPlays += lastViews;
+          if (deltaViews > 0) totalPlays += deltaViews;
         }
       }
 
@@ -1038,7 +1047,7 @@ export default function App() {
                   return parts.join(" · ");
                 })()}
                 accent="from-[#B8823A] to-[#7FB3A3]"
-                info={`Watch time OSSERVATO nel periodo: somma dei delta video_view_total_time tra il primo e l'ultimo snapshot di ogni reel attivo. Onesto: non includiamo watch precedente al primo snapshot disponibile (la metrica esiste solo da fine aprile 2026, gli snapshot vecchi hanno NULL). Tra ~7 giorni di cron orario sarà = al lifetime per qualunque reel attivo. Sotto: numero di reel pubblicati in periodo + plays totali (= "su quanti contenuti e con quante riproduzioni si è generato questo watch").`}
+                info={`Watch time OSSERVATO nel periodo: somma dei delta video_view_total_time tra il primo e l'ultimo snapshot di ogni reel attivo. Onesto: non includiamo watch precedente al primo snapshot disponibile (la metrica esiste solo da fine aprile 2026). Tra ~7 giorni di cron orario sarà = al lifetime per qualunque reel attivo. Subtitle: "X reel pubblicati" (count totale dei reel del periodo) + "Y plays" che è anch'esso un delta osservato (lastViews - firstViews per ogni reel), così rispetta la stessa finestra del watch.`}
               />
               <KpiCard
                 icon={<Layers size={16} />}

@@ -1,12 +1,12 @@
 name: Publish dashboard · GitHub Pages
 
 # Pre-rendera data.json (chiamate Graph API con token da Secrets), builda Vite
-# e deploya su GitHub Pages. Gira ogni 4h in sincronia col fresh snapshot,
+# e deploya su GitHub Pages. Gira ogni ora (10 min dopo lo snapshot fresh),
 # più su ogni push a main.
 
 on:
   schedule:
-    - cron: '15 */4 * * *'
+    - cron: '15 * * * *'
   push:
     branches: [main]
     paths:

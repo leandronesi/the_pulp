@@ -12,6 +12,14 @@ Tipi di kind:
 
 ---
 
+## [2026-05-01] refactor | publish-dashboard cron 4h → orario
+
+Mismatch di cadenza scoperto in conversazione: `snapshot-fresh` scriveva su Turso ogni ora ma `publish-dashboard` rigenerava `data.json` solo ogni 4h, quindi la dashboard pubblica vedeva i nuovi dati con ritardo fino a 4h. Cambiato cron in [.github/workflows/publish-dashboard.yml](../.github/workflows/publish-dashboard.yml) da `15 */4 * * *` a `15 * * * *` — sfasato di 10 min dopo lo snapshot fresh (`5 * * * *`). Repo public → GH Actions illimitato, nessun vincolo di costo.
+
+Aggiornato anche il riferimento in [ig-dashboard/CLAUDE.md](../ig-dashboard/CLAUDE.md) sezione Deploy pubblico.
+
+---
+
 ## [2026-04-29] refactor | Cron fresh orario + daily_snapshot upsert + fix off-by-one
 
 Tre cambi correlati a [ADR 002](decisions/002-fresh-vs-full-snapshot.md) (sezione "Aggiornamento 2026-04-29"):

@@ -191,7 +191,7 @@ Ogni script è ESM, carica `.env` tramite il flag `--env-file-if-exists` di Node
 
 Il dashboard è deployato su GitHub Pages come sito statico pre-renderato. Pattern:
 
-1. Workflow [.github/workflows/publish-dashboard.yml](../.github/workflows/publish-dashboard.yml) gira ogni 4h (cron `15 */4 * * *`) + su ogni push a `main` che tocca `ig-dashboard/**`.
+1. Workflow [.github/workflows/publish-dashboard.yml](../.github/workflows/publish-dashboard.yml) gira ogni ora (cron `15 * * * *`, sfasato di 10 min dopo `snapshot-fresh`) + su ogni push a `main` che tocca `ig-dashboard/**`.
 2. Lo step "Export data.json" chiama la Graph API lato server (token dal GitHub Secret `IG_PAGE_TOKEN`) e scrive `ig-dashboard/public/data.json` con profilo, 30 post, audience e 3 range pre-calcolati (7/30/90g).
 3. Lo step "Build" esegue `VITE_USE_STATIC=true VITE_PUBLIC_PATH=/the_pulp/ npm run build`. Il flag static fa sì che [src/App.jsx](src/App.jsx) carichi `/data.json` invece di chiamare Graph API direttamente.
 4. Deploy via `actions/upload-pages-artifact` + `actions/deploy-pages`.

@@ -12,6 +12,42 @@ Tipi di kind:
 
 ---
 
+## [2026-05-03] refactor | Overview KPI riorganizzato + Stories semplificato
+
+Feedback utente sui KPI delle prime due righe Overview e sulla tab Stories. Tre cambi principali:
+
+1. **Overview · riga 1 (5 hero KPI)** ora è solo "volume per format": Followers + Reels (count) + Carousel + Video + Foto. La card Reels prima conteneva il pill `watch Xs` e la legenda watch tier — rimossi. La vecchia card "Tempo reel" è stata eliminata dalla riga 1.
+
+2. **Overview · riga 2 (rate strip)** ora è: Reach · **Tempo reel** · **Engagement (post-based)** · Share rate. Rispetto a prima:
+   - **Save rate rimosso**: su micro-account (<1k follower) il segnale è troppo zero-inflated per essere actionable in dashboard (a fine mese resta utile per analisi mensile, ma su 7g rumore puro). Il save rate resta calcolato in `postMetricsAgg` per chi lo voglia leggere via codice/briefing.
+   - **Tempo reel spostato qui** dalla riga 1 — RateCard col tier `watchTimeTier` e legend pill, info testuale che cita il count reel pubblicati e la finestra osservata.
+   - **Engagement ora è post-based**: `Σ(interactions post) / Σ(reach post) × 100`, calcolato in `postMetricsAgg.engagementRate`. Prima usava i daily_snapshot account-level (`totals.total_interactions / totals.reach`) che includono anche azioni profilo non legate ai contenuti del periodo. Il delta vs prec è calcolato in `postMetricsAggPrev` filtrando `posts` sul periodo `[since-rangeSec, since)`. Vecchi memo `engagementRate` / `engagementRatePrev` rimossi insieme agli import inutilizzati (`Bookmark`, `saveRateTier`).
+
+3. **Stories tab semplificata**: 4 KPI tile → 2 (REACH MEDIO + INTERACTION RATE). Aggiunto **area chart "reach giornaliero stories"** sotto le tile, stesso pattern visivo del reach Overview (gradient cream + tooltip `count storie/giorno`). Rimossi NAVIGATION/REACH (segnale ambiguo, già discusso in tooltip dello story row) e REPLY RATE (assorbito dall'INTERACTION RATE che lo include). Il count stories e il reply rate restano visibili nell'insight bar narrativa e nelle strisciatine. `storyNavRateTier` import rimosso da stories.jsx.
+
+**Razionale dietro l'ER post-based** ([reports/aprile-2026.md §4](../reports/aprile-2026.md)): aprile ha mostrato che il calcolo account-level può divergere dal segnale "contenuti pubblicati" quando i daily includono profile_views / website_clicks. Mostrare il numero che riflette esattamente i post del periodo è più utile per le decisioni editoriali e più stabile della media-delle-medie per-post (un post con reach piccolissimo non gonfia il numero).
+
+Build OK ([dist/](../ig-dashboard/dist/)) · dev `:5180` up. Verifica visuale browser ancora da fare.
+
+---
+
+## [2026-05-01] audit | Primo report mensile (aprile 2026)
+
+Primo deep dive a mano del progetto post-ripartenza, scritto come report mensile e non generato da `report-deep.js`. Output: [reports/aprile-2026.md](../reports/aprile-2026.md).
+
+Pattern centrali emersi (calibrati su contesto micro-account romano <500 follower, fase Lancio):
+
+1. **Reach altissimo, follower piatti**: 6 post su 10 ad aprile hanno R/F > 200%, ma la conversione visibilità→follow è ~0.05-0.1% (industry per il segmento sarebbe 0.3-0.5%). Il bottleneck non è l'algoritmo, è il funnel di profilo: bio descrittiva non promette, 0% CTA nei post, niente highlight permanenti.
+2. **Il ritmo conta più della qualità**: aprile -22% reach mensile vs marzo è quasi interamente spiegato da un buco editoriale di 13 giorni (10-22 apr). Sotto i 1000 follower, l'algoritmo "spegne" velocemente account in silenzio.
+3. **Saved -32% mese su mese**: il segnale che IG ranka di più è quello che cala di più. Pulp manca di formati "consultabili" (liste, mappe, mini-guide) — è prevalentemente manifesto + ironia. Da bilanciare a maggio.
+4. **Audience stabilità**: F 58% / 25-44 71% / Roma 67% — invariata tra 24 e 30 aprile. Coerente con un mese di volume normale: l'audience non si sposta con 10 post.
+
+Aggiunto script riusabile [ig-dashboard/scripts/analyst-dump.js](../ig-dashboard/scripts/analyst-dump.js) che dump-a Turso in `reports/raw-dump-YYYY-MM-DD.json` per analisti umani/AI. Comando: `npm run analyst:dump`.
+
+Salvato anche audit dedicato in [wiki/audits/pulp-aprile-2026.md](audits/pulp-aprile-2026.md) con i pattern duraturi (non i numeri del singolo mese, ma le inferenze ripetibili).
+
+---
+
 ## [2026-05-01] refactor | publish-dashboard cron 4h → orario
 
 Mismatch di cadenza scoperto in conversazione: `snapshot-fresh` scriveva su Turso ogni ora ma `publish-dashboard` rigenerava `data.json` solo ogni 4h, quindi la dashboard pubblica vedeva i nuovi dati con ritardo fino a 4h. Cambiato cron in [.github/workflows/publish-dashboard.yml](../.github/workflows/publish-dashboard.yml) da `15 */4 * * *` a `15 * * * *` — sfasato di 10 min dopo lo snapshot fresh (`5 * * * *`). Repo public → GH Actions illimitato, nessun vincolo di costo.

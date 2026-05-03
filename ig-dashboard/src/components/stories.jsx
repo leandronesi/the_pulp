@@ -1,5 +1,13 @@
 import { useState, useMemo } from "react";
-import { ResponsiveContainer, AreaChart, Area } from "recharts";
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+} from "recharts";
 import { CircleDot, TrendingUp, AlertCircle, Sparkles } from "lucide-react";
 import { fmt } from "../utils/format.js";
 import { DeltaPill } from "./kpi-cards.jsx";
@@ -7,7 +15,6 @@ import { InfoTip } from "./tooltips.jsx";
 import {
   storyReachRateTier,
   storyReplyRateTier,
-  storyNavRateTier,
 } from "../utils/tiers.js";
 
 // Mini-strip in Overview: invita a vedere la tab Stories.
@@ -121,6 +128,25 @@ export function StoriesTab({ stories, storyHistory, followersCount }) {
     [aggregates, prevAggregates, enrichedStories, windowDays]
   );
 
+  // Reach giornaliero stories per area chart: aggreghiamo per data IT (stesso
+  // formato dei pallini Overview) sommando il reach delle stories del giorno.
+  // Niente padding sui giorni vuoti — la curva ha buchi reali quando non si è
+  // pubblicato, è informazione, non rumore.
+  const reachByDay = useMemo(() => {
+    if (!inWindow.length) return [];
+    const map = new Map();
+    for (const s of inWindow) {
+      const d = new Date(s.timestamp);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const label = d.toLocaleDateString("it-IT", { day: "2-digit", month: "short" });
+      if (!map.has(key)) map.set(key, { key, date: label, reach: 0, count: 0 });
+      const row = map.get(key);
+      row.reach += s.reach || 0;
+      row.count += 1;
+    }
+    return [...map.values()].sort((a, b) => a.key.localeCompare(b.key));
+  }, [inWindow]);
+
   if (!stories.length) {
     return (
       <div className="glass rounded-3xl p-8 text-center">
@@ -168,25 +194,14 @@ export function StoriesTab({ stories, storyHistory, followersCount }) {
       {insights.length > 0 && <InsightsBar insights={insights} />}
 
       {aggregates && (
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8 fadein">
-          <StoryKpi
-            label="STORIES PUBBLICATE"
-            value={aggregates.count}
-            sublabel={`ultimi ${windowDays}g`}
-            deltaPct={
-              prevAggregates && prevAggregates.count > 0
-                ? ((aggregates.count - prevAggregates.count) / prevAggregates.count) * 100
-                : null
-            }
-            info={`Numero di stories pubblicate negli ultimi ${windowDays}g. La cadenza è metà del gioco: IG premia chi resta visibile in cima al feed delle stories. Pause lunghe = reach medio crolla. Vedi delta vs ${windowDays}g precedenti.`}
-          />
+        <section className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 fadein">
           <StoryKpi
             label="REACH MEDIO"
             value={Math.round(aggregates.reachAvg)}
             sublabel={
               followersCount
-                ? `${((aggregates.reachAvg / followersCount) * 100).toFixed(0)}% dei follower`
-                : `tot ${fmt(aggregates.reach)}`
+                ? `${((aggregates.reachAvg / followersCount) * 100).toFixed(0)}% dei follower · ${aggregates.count} storie · tot ${fmt(aggregates.reach)}`
+                : `${aggregates.count} storie · tot ${fmt(aggregates.reach)}`
             }
             deltaPct={
               prevAggregates && prevAggregates.reachAvg > 0
@@ -201,24 +216,81 @@ export function StoriesTab({ stories, storyHistory, followersCount }) {
             info="Account UNICI che vedono in media ogni story (dedupe per story, non per periodo). Il pill mostra la quota sui follower: <10% = low, 10-25% = normal, 25-50% = strong, >50% = viral. IG di base mostra le stories al 5-15% dei follower; sopra al 25% sei sopra media."
           />
           <StoryKpi
-            label="REPLY RATE"
-            value={aggregates.replyRate.toFixed(1) + "%"}
-            sublabel={`${aggregates.replies} risposte / ${fmt(aggregates.reach)} reach`}
+            label="INTERACTION RATE"
+            value={aggregates.interRate.toFixed(1) + "%"}
+            sublabel={`${aggregates.interactions} interazioni / ${fmt(aggregates.reach)} reach · ${aggregates.replies} via DM`}
             deltaPct={
-              prevAggregates && prevAggregates.replyRate > 0
-                ? ((aggregates.replyRate - prevAggregates.replyRate) / prevAggregates.replyRate) * 100
+              prevAggregates && prevAggregates.interRate > 0
+                ? ((aggregates.interRate - prevAggregates.interRate) / prevAggregates.interRate) * 100
                 : null
             }
-            tier={storyReplyRateTier(aggregates.replyRate)}
-            info="Risposte via DM (sticker o reply diretto allo story) divise per reach × 100. Il reply via DM è high-effort: aprire la chat e scrivere costa tempo. Per questo anche 1% è un segnale forte di affinità — la maggior parte delle audience guarda e va via in silenzio. >1.5% = forte, 0.5-1.5% = medio, <0.5% = basso."
+            tier={storyReplyRateTier(aggregates.interRate)}
+            info="Total interactions ÷ Reach × 100. Aggrega TUTTE le interazioni dirette: reply via DM (high-effort), reactions rapide, sticker, swipe interattivi. Più indicativo del reply rate puro perché cattura anche i micro-segnali. Soglie indicative (allineate al reply rate): >1.5% = forte, 0.5-1.5% = medio, <0.5% = basso."
           />
-          <StoryKpi
-            label="NAVIGATION / REACH"
-            value={aggregates.navRate.toFixed(2) + "×"}
-            sublabel="azioni di navigazione per visione"
-            tier={storyNavRateTier(aggregates.navRate)}
-            info="Somma delle azioni di navigazione (tap-forward per skippare, tap-back per rivedere, swipe via, salto al prossimo account) divisa per reach. Letta da sola è ambigua: alta vuol dire 'audience attiva' MA può significare sia interazione sana (rivedere, swipe-up) sia exit precoce. Va incrociata col reply rate: nav alta + reply bassi = i frame iniziali non agganciano e la gente fugge; nav alta + reply alti = audience che esplora e poi reagisce."
-          />
+        </section>
+      )}
+
+      {reachByDay.length >= 2 && (
+        <section className="glass rounded-2xl p-5 sm:p-6 mb-8 fadein">
+          <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-2 mb-4">
+            <div>
+              <h3 className="display-font text-xl text-white font-light">
+                <span className="italic">reach</span> giornaliero stories
+              </h3>
+              <p className="text-[11px] text-white/40 mono-font mt-1">
+                somma reach per giorno · ultimi {windowDays}g · {aggregates?.count || 0} storie
+              </p>
+            </div>
+            <div className="flex items-baseline gap-2 text-xs mono-font text-white/50">
+              <span>tot</span>
+              <span className="text-white font-semibold tabular-nums">
+                {fmt(aggregates?.reach || 0)}
+              </span>
+            </div>
+          </div>
+          <div style={{ width: "100%", height: 180 }}>
+            <ResponsiveContainer>
+              <AreaChart
+                data={reachByDay}
+                margin={{ top: 8, right: 8, bottom: 4, left: 0 }}
+              >
+                <defs>
+                  <linearGradient id="storyReachGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#EDE5D0" stopOpacity={0.45} />
+                    <stop offset="100%" stopColor="#EDE5D0" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="rgba(237,229,208,0.06)" vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  stroke="rgba(237,229,208,0.4)"
+                  tick={{ fontSize: 10, fontFamily: "JetBrains Mono" }}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  stroke="rgba(237,229,208,0.4)"
+                  tick={{ fontSize: 10, fontFamily: "JetBrains Mono" }}
+                  tickLine={false}
+                  axisLine={false}
+                  width={36}
+                  allowDecimals={false}
+                />
+                <Tooltip
+                  cursor={{ stroke: "rgba(237,229,208,0.2)", strokeDasharray: "3 3" }}
+                  content={<StoryReachTooltip />}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="reach"
+                  stroke="#EDE5D0"
+                  strokeWidth={1.8}
+                  fill="url(#storyReachGrad)"
+                  isAnimationActive={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
         </section>
       )}
 
@@ -261,6 +333,28 @@ export function StoriesTab({ stories, storyHistory, followersCount }) {
         </ul>
       </div>
     </>
+  );
+}
+
+// ─── Reach chart tooltip ─────────────────────────────────────────────────
+
+function StoryReachTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload;
+  return (
+    <div
+      className="glass rounded-md px-3 py-2 text-[11px] mono-font text-white/85"
+      style={{ fontFamily: "JetBrains Mono" }}
+    >
+      <div className="text-white/50">{p.date}</div>
+      <div className="mt-0.5">
+        <span className="font-semibold tabular-nums">{fmt(p.reach)}</span>{" "}
+        <span className="text-white/40">reach</span>
+      </div>
+      <div className="text-[10px] text-white/40 mt-0.5">
+        {p.count} {p.count === 1 ? "storia" : "storie"}
+      </div>
+    </div>
   );
 }
 

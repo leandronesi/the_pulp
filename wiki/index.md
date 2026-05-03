@@ -37,6 +37,7 @@ Artefatto persistente e compondente di conoscenza sul progetto. Pattern Karpathy
 
 ### Audit (snapshot di uno stato in una data)
 - [audits/pulp-audience-2026-04-24.md](audits/pulp-audience-2026-04-24.md) — Prima fotografia di audience completa
+- [audits/pulp-aprile-2026.md](audits/pulp-aprile-2026.md) — Pattern duraturi dal primo report mensile (funnel di conversione, ritmo, saved sotto-tier)
 
 ## Log
 Vedi [log.md](log.md) per il cronologico di ingest, modifiche strutturali, audit.

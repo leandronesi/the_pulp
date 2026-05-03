@@ -20,7 +20,6 @@ import {
   Eye,
   TrendingUp,
   Heart,
-  Bookmark,
   RefreshCw,
   AlertCircle,
   Film,
@@ -144,7 +143,6 @@ import {
 import {
   erTier,
   reachRateTier,
-  saveRateTier,
   shareRateTier,
   watchTimeTier,
   ER_TIERS_LEGEND,
@@ -528,16 +526,6 @@ export default function App() {
   const totals = insights?.totals || {};
   const totalsPrev = insightsPrev?.totals || {};
 
-  const engagementRate = useMemo(() => {
-    if (!totals.reach || totals.total_interactions == null) return null;
-    return (totals.total_interactions / totals.reach) * 100;
-  }, [totals]);
-
-  const engagementRatePrev = useMemo(() => {
-    if (!totalsPrev.reach || totalsPrev.total_interactions == null) return null;
-    return (totalsPrev.total_interactions / totalsPrev.reach) * 100;
-  }, [totalsPrev]);
-
   const reachChartData = useMemo(() => {
     if (!insights?.reachDaily) return [];
     return insights.reachDaily.map((v) => ({
@@ -818,32 +806,69 @@ export default function App() {
     return { grid, maxAvg, total: analyzedPosts.length };
   }, [analyzedPosts]);
 
-  // Nuove metriche aggregate periodo: save rate, share rate, views totali.
-  // Calcolate sui post visibili (feed fetched), quindi "indicative del periodo"
-  // ma non garantite allineate con total_interactions di daily_snapshot.
+  // Nuove metriche aggregate periodo: engagement rate (post-based), save rate,
+  // share rate, views totali. Calcolate sui post visibili (feed fetched), quindi
+  // "indicative del periodo" ma non garantite allineate con total_interactions
+  // di daily_snapshot. Engagement rate qui è (Σ interactions post) / (Σ reach
+  // post) × 100 — più stabile della media-delle-medie e più diretto sulle
+  // decisioni editoriali (l'account-level di daily_snapshot include anche
+  // azioni profilo che non dipendono dal contenuto del periodo).
   const postMetricsAgg = useMemo(() => {
     if (!analyzedPosts.length) return null;
     let reachSum = 0;
     let savedSum = 0;
     let sharesSum = 0;
+    let interactionsSum = 0;
     let viewsSum = 0;
     let videoCount = 0;
     for (const p of analyzedPosts) {
       reachSum += p.reach;
       savedSum += p.saved;
       sharesSum += p.shares;
+      interactionsSum += p.interactions;
       if (isVideoLikeMedia(p)) {
         viewsSum += p.views;
         videoCount += 1;
       }
     }
     return {
+      engagementRate: reachSum > 0 ? (interactionsSum / reachSum) * 100 : null,
       saveRate: reachSum > 0 ? (savedSum / reachSum) * 100 : null,
       shareRate: reachSum > 0 ? (sharesSum / reachSum) * 100 : null,
       viewsTotal: viewsSum,
       videoCount,
     };
   }, [analyzedPosts]);
+
+  // Stesso calcolo dell'engagement rate post-based ma sul periodo precedente
+  // (stessa durata, finestra adiacente). Serve per il delta vs prec.
+  // Filtriamo `posts` direttamente perché analyzedPosts copre solo il periodo
+  // corrente. Niente analytics enrichment (curve/quadrant) — qui ci servono solo
+  // reach + interactions, che leggiamo da postAnalyticsById o dal post raw.
+  const postMetricsAggPrev = useMemo(() => {
+    const rangeSec = untilUnix - sinceUnix;
+    if (rangeSec <= 0) return null;
+    const prevSinceMs = (sinceUnix - rangeSec) * 1000;
+    const prevUntilMs = sinceUnix * 1000;
+    let reachSum = 0;
+    let interactionsSum = 0;
+    let n = 0;
+    for (const p of posts) {
+      const t = new Date(p.timestamp).getTime();
+      if (t < prevSinceMs || t >= prevUntilMs) continue;
+      const a = postAnalyticsById?.[p.id] || {};
+      const r = a.reach ?? metricOf(p, "reach") ?? 0;
+      const it = a.interactions ?? postInteractions(p) ?? 0;
+      reachSum += r;
+      interactionsSum += it;
+      n += 1;
+    }
+    if (!n) return null;
+    return {
+      engagementRate: reachSum > 0 ? (interactionsSum / reachSum) * 100 : null,
+      n,
+    };
+  }, [posts, postAnalyticsById, sinceUnix, untilUnix]);
 
   // Reach rate = reach del periodo / followers × 100
   const reachRate = useMemo(() => {
@@ -1043,33 +1068,7 @@ export default function App() {
                 label={`Reels · ${dateRange}g`}
                 value={String(analyzedPosts.filter((p) => p.mediaType === "REELS").length)}
                 accent="from-[#D4A85C] to-[#B8823A]"
-                tier={watchTimeTier(reelAvgWatchSec)}
-                tierLabel={
-                  reelAvgWatchSec != null
-                    ? `watch ${reelAvgWatchSec.toFixed(reelAvgWatchSec >= 10 ? 0 : 1)}s`
-                    : null
-                }
-                legend={reelAvgWatchSec != null ? WATCH_TIME_TIERS_LEGEND : null}
-                legendCurrent={watchTimeTier(reelAvgWatchSec)?.label}
-                info={`Numero di reel pubblicati negli ultimi ${dateRange} giorni. Il pill mostra il tempo di visualizzazione medio (avg_watch_time) sui reel del periodo: <4s = il gancio iniziale non funziona, >15s = la metà di un reel medio è guardata. Richiede l'archivio Turso popolato — i reel troppo recenti possono ancora non avere la metrica.`}
-              />
-              <KpiCard
-                icon={<Clock size={16} />}
-                label={`Tempo reel · ${dateRange}g`}
-                value={reelTotalWatchMs != null ? fmtDuration(reelTotalWatchMs) : "—"}
-                subtitle={(() => {
-                  const parts = [];
-                  parts.push(`${reelPublishedCount} reel pubblicati`);
-                  if (reelTotalPlays != null && reelTotalPlays > 0) {
-                    parts.push(`${fmt(reelTotalPlays)} plays`);
-                  }
-                  if (reelObservedSinceTs != null) {
-                    parts.push(`dal ${fmtDate(reelObservedSinceTs)}`);
-                  }
-                  return parts.join(" · ");
-                })()}
-                accent="from-[#B8823A] to-[#7FB3A3]"
-                info={`Watch time OSSERVATO nel periodo: somma dei delta video_view_total_time tra il primo e l'ultimo snapshot di ogni reel attivo. Onesto: non includiamo watch precedente al primo snapshot disponibile (la metrica esiste solo da fine aprile 2026). Tra ~7 giorni di cron orario sarà = al lifetime per qualunque reel attivo. Subtitle: "X reel pubblicati" (count totale dei reel del periodo) + "Y plays" che è anch'esso un delta osservato (lastViews - firstViews per ogni reel), così rispetta la stessa finestra del watch.`}
+                info={`Numero di reel pubblicati negli ultimi ${dateRange} giorni. Watch time e qualità del gancio sono nella card "Tempo reel" della riga sotto.`}
               />
               <KpiCard
                 icon={<Layers size={16} />}
@@ -1077,6 +1076,13 @@ export default function App() {
                 value={String(analyzedPosts.filter((p) => p.mediaType === "CAROUSEL_ALBUM").length)}
                 accent="from-[#7FB3A3] to-[#3E7A66]"
                 info={`Numero di carousel pubblicati negli ultimi ${dateRange} giorni.`}
+              />
+              <KpiCard
+                icon={<Video size={16} />}
+                label={`Video · ${dateRange}g`}
+                value={String(analyzedPosts.filter((p) => p.mediaType === "VIDEO").length)}
+                accent="from-[#D98B6F] to-[#B8823A]"
+                info={`Numero di video feed (non Reels) pubblicati negli ultimi ${dateRange} giorni. Su IG 2026 il formato Video feed è in disuso — la spinta algoritmica va ai Reels.`}
               />
               <KpiCard
                 icon={<ImageIcon size={16} />}
@@ -1087,7 +1093,9 @@ export default function App() {
               />
             </section>
 
-            {/* Rate strip — reach, engagement (con leggenda cluster), save rate, share rate */}
+            {/* Rate strip — reach, tempo reel (watch totale + qualità gancio),
+                engagement post-based, share rate. Save rate rimosso (su micro-
+                account il segnale è troppo zero-inflated per essere actionable). */}
             <section className="grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-4 gap-3 mb-8 fadein">
               <RateCard
                 icon={<TrendingUp size={14} />}
@@ -1103,21 +1111,32 @@ export default function App() {
                 info={`Account UNICI che hanno visto almeno un contenuto negli ultimi ${dateRange} giorni. Un utente che vede 10 post conta 1 (dedupe automatico Meta). Il pill "X% dei follower" è il reach rate: quanto hai bucato la cerchia. Viral >100%, strong 30-100%, normal 10-30%, low <10%.`}
               />
               <RateCard
-                icon={<Activity size={14} />}
-                label="Engagement"
-                value={fmtPct(engagementRate)}
-                deltaPct={delta(engagementRate, engagementRatePrev)}
-                tier={erTier(engagementRate)}
-                legend={ER_TIERS_LEGEND}
-                legendCurrent={erTier(engagementRate)?.label}
-                info="Engagement rate del periodo: (like + commenti + salvati + condivisioni + azioni sul profilo) / reach. Più alto = audience che interagisce di più rispetto a quanta ne raggiungi."
+                icon={<Clock size={14} />}
+                label={`Tempo reel · ${dateRange}g`}
+                value={reelTotalWatchMs != null ? fmtDuration(reelTotalWatchMs) : "—"}
+                tier={watchTimeTier(reelAvgWatchSec)}
+                tierLabel={
+                  reelAvgWatchSec != null
+                    ? `watch ${reelAvgWatchSec.toFixed(reelAvgWatchSec >= 10 ? 0 : 1)}s`
+                    : null
+                }
+                legend={reelAvgWatchSec != null ? WATCH_TIME_TIERS_LEGEND : null}
+                legendCurrent={watchTimeTier(reelAvgWatchSec)?.label}
+                info={`Tempo TOTALE di visualizzazione osservato sui reel del periodo (${reelPublishedCount} reel pubblicati${reelObservedSinceTs ? `, finestra dal ${fmtDate(reelObservedSinceTs)}` : ""}). Il pill mostra il tempo MEDIO per visualizzazione (avg_watch_time): <4s = il gancio iniziale non funziona, 4-10s = ok, >15s = il reel viene davvero guardato. La metrica avg esiste su Turso solo da fine aprile 2026, possibile undercount sui reel più vecchi del nostro storico.`}
               />
               <RateCard
-                icon={<Bookmark size={14} />}
-                label="Save rate"
-                value={fmtPct(postMetricsAgg?.saveRate)}
-                tier={saveRateTier(postMetricsAgg?.saveRate)}
-                info="Saves ÷ Reach × 100. Nel 2026 Meta dà peso ~5× ai salvataggi rispetto ai like per spingere su Esplora. >2% excellent · 1–2% good · 0.5–1% avg · <0.5% poor."
+                icon={<Activity size={14} />}
+                label="Engagement"
+                value={fmtPct(postMetricsAgg?.engagementRate)}
+                deltaPct={
+                  postMetricsAgg?.engagementRate != null && postMetricsAggPrev?.engagementRate != null
+                    ? delta(postMetricsAgg.engagementRate, postMetricsAggPrev.engagementRate)
+                    : null
+                }
+                tier={erTier(postMetricsAgg?.engagementRate)}
+                legend={ER_TIERS_LEGEND}
+                legendCurrent={erTier(postMetricsAgg?.engagementRate)?.label}
+                info="Engagement rate del periodo, calcolato sui contenuti pubblicati: somma di (like + commenti + salvati + condivisioni) di tutti i post ÷ somma reach dei post × 100. Più stabile della media-delle-medie: un post con reach piccolissimo non gonfia il numero. Diverso dall'ER account-level (basato sui daily_snapshot) — questo riflette esattamente quanto i contenuti del periodo hanno attivato chi li ha visti."
               />
               <RateCard
                 icon={<Share2 size={14} />}
@@ -1362,6 +1381,14 @@ export default function App() {
                               <span className="text-white/45">ER medio</span>
                               <span className="text-white font-semibold tabular-nums">{m.avgEr.toFixed(1)}%</span>
                             </div>
+                            {type === "REELS" && reelAvgWatchSec != null && (
+                              <div className="flex justify-between">
+                                <span className="text-white/45">watch medio</span>
+                                <span className="text-white font-semibold tabular-nums">
+                                  {reelAvgWatchSec.toFixed(reelAvgWatchSec >= 10 ? 0 : 1)}s
+                                </span>
+                              </div>
+                            )}
                           </div>
                         )}
                         {empty && (

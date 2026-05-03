@@ -12,7 +12,9 @@
     "snapshot:fresh": "node --env-file-if-exists=.env scripts/snapshot.js --fresh-only",
     "export-json": "node --env-file-if-exists=.env scripts/export-json.js",
     "briefing": "node --env-file-if-exists=.env scripts/briefing.js",
-    "report:deep": "node --env-file-if-exists=.env scripts/report-deep.js"
+    "report:deep": "node --env-file-if-exists=.env scripts/report-deep.js",
+    "analyst:dump": "node --env-file-if-exists=.env scripts/analyst-dump.js",
+    "pdf": "node scripts/md-to-pdf.js"
   },
   "dependencies": {
     "@libsql/client": "^0.17.3",
@@ -21,6 +23,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "date-fns": "^4.1.0",
     "lucide-react": "^0.400.0",
+    "marked": "^18.0.2",
     "react": "^18.3.1",
     "react-day-picker": "^9.14.0",
     "react-dom": "^18.3.1",

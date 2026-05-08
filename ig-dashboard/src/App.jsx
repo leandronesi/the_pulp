@@ -678,35 +678,57 @@ export default function App() {
         const hist = postHistory?.[p.id] || [];
         if (!hist.length) continue;
 
-        // Track sia vtt sia views sullo stesso paio di snapshot (firstObs/lastObs)
-        // così il delta dei plays è coerente col delta del watch time —
-        // entrambi rappresentano "guadagnato durante la nostra finestra di
-        // osservazione in periodo".
-        let firstObs = null;
-        let firstViews = null;
-        let firstObsTs = null;
+        // Baseline = video_view_total_time all'INIZIO del periodo. Preferiamo
+        // l'ultimo snapshot con t < sinceMs (così copriamo l'intera finestra).
+        // Fallback al primo snapshot in periodo (reel pubblicato dopo sinceMs
+        // o storia troppo corta): perdiamo la coda iniziale di watch time, ma
+        // è onesto — niente baseline=0 inferita.
+        let preBaseline = null;
+        let preBaselineViews = null;
+        let firstInPeriod = null;
+        let firstInPeriodViews = null;
+        let firstInPeriodTs = null;
         let lastObs = null;
         let lastViews = null;
         for (const e of hist) {
           if (e.t > untilMs) break;
           if (e.video_view_total_time == null) continue;
-          if (firstObs == null) {
-            firstObs = e.video_view_total_time;
-            firstViews = e.views || 0;
-            firstObsTs = e.t;
+          if (e.t < sinceMs) {
+            preBaseline = e.video_view_total_time;
+            preBaselineViews = e.views || 0;
+            continue;
+          }
+          if (firstInPeriod == null) {
+            firstInPeriod = e.video_view_total_time;
+            firstInPeriodViews = e.views || 0;
+            firstInPeriodTs = e.t;
           }
           lastObs = e.video_view_total_time;
           lastViews = e.views || 0;
         }
-        if (lastObs == null || firstObs == null) continue;
-        const deltaMs = lastObs - firstObs;
-        const deltaViews = (lastViews || 0) - (firstViews || 0);
+        if (lastObs == null) continue;
+
+        let baseline, baselineViews, effectiveStartTs;
+        if (preBaseline != null) {
+          baseline = preBaseline;
+          baselineViews = preBaselineViews;
+          effectiveStartTs = sinceMs;
+        } else if (firstInPeriod != null) {
+          baseline = firstInPeriod;
+          baselineViews = firstInPeriodViews;
+          effectiveStartTs = firstInPeriodTs;
+        } else {
+          continue;
+        }
+
+        const deltaMs = lastObs - baseline;
+        const deltaViews = (lastViews || 0) - (baselineViews || 0);
         if (deltaMs > 0) {
           totalDeltaMs += deltaMs;
           contributingReels += 1;
           if (deltaViews > 0) totalPlays += deltaViews;
-          if (earliestObsTs == null || firstObsTs < earliestObsTs) {
-            earliestObsTs = firstObsTs;
+          if (earliestObsTs == null || effectiveStartTs < earliestObsTs) {
+            earliestObsTs = effectiveStartTs;
           }
         }
       }

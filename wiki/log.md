@@ -12,6 +12,28 @@ Tipi di kind:
 
 ---
 
+## [2026-05-08] refactor | Fix watch time reel: ora rispetta il periodo
+
+Bug nel KPI "Tempo totale visualizzazione reel" su [App.jsx](../ig-dashboard/src/App.jsx) (useMemo `reelTotalWatchMs`): il delta `lastObs - firstObs` ignorava il bound inferiore `sinceMs`. `firstObs` era sempre il primissimo snapshot esistente del reel, `lastObs` il più recente ≤ `untilMs`. Risultato: il numero non cambiava al variare del periodo selezionato (7/30/90gg).
+
+Fix: introdotti `preBaseline` (ultimo snapshot con `t < sinceMs`, copre l'intera finestra) e `firstInPeriod` (fallback se la storia non arriva prima di `sinceMs`). Baseline = `preBaseline` se disponibile, altrimenti `firstInPeriod`. Coerente con il comment originale ("Niente baseline=0 inferita") e con l'intento documentato in ADR 008.
+
+Ora il KPI cresce con il periodo come ci si aspetta. Sui range corti (7gg) il valore può ancora essere undercount finché non maturiamo abbastanza storia (~7 giorni di cron orario).
+
+## [2026-05-03] note | Pitch deck nuovo + three-insights aprile
+
+Per il momento "vado dai The Pulp e gli spiego la dashboard" servivano due artefatti che il `dashboard-intro.html` non copre, perché quello è scritto come **manuale tecnico** (15 slide che spiegano ogni feature):
+
+1. **[docs/dashboard-pitch.html](../docs/dashboard-pitch.html)** — pitch caldo per pubblico non-numerico, 10 slide. Tono editoriale Pulp, niente jargon. Frame: "Una memoria per i vostri contenuti" (IG dimentica, noi no). Slide narrative: chi sono, problema IG, cos'è, grammatica 4 parole, 3 insight di aprile (vedono in tantissimi/follower fermi, smettete e algoritmo dimentica, voi vs manifesto), come si usa, chiusura. Ogni insight ha numero grande + claim italica + "mossa di maggio" con misura.
+
+2. **[reports/aprile-2026-three-insights.md](../reports/aprile-2026-three-insights.md)** — distillazione iper-compatta del report mensile a 3 messaggi, formato leggibile in 90 secondi. Per quando si vuole "il messaggio" senza il numero di pagine del report pieno.
+
+Il manuale tecnico [docs/dashboard-intro.html](../docs/dashboard-intro.html) resta ed è stato **allineato alla UI nuova** post-refactor 2026-05-03: slide 5 (Overview KPI) descrive ora 5 card volume per format + 4 card qualità (Reach/Tempo reel/Engagement post-based/Share rate, niente più Save rate); slide 8 (Content mix) menziona watch medio nella tile REELS; slide 9 (Stories) aggiornata a 2 KPI principali + reach giornaliero chart.
+
+Pattern di separazione utile per il futuro: **pitch** (perché serve, valore) ≠ **manuale** (come funziona, ogni feature). Audience diverse, tono diverso, lunghezza diversa.
+
+---
+
 ## [2026-05-03] refactor | Overview KPI riorganizzato + Stories semplificato
 
 Feedback utente sui KPI delle prime due righe Overview e sulla tab Stories. Tre cambi principali:

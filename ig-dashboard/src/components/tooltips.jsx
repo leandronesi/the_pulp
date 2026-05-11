@@ -1,8 +1,9 @@
 import * as RTooltip from "@radix-ui/react-tooltip";
 import { Info } from "lucide-react";
-import { fmt, fmtDate } from "../utils/format.js";
+import { fmt, fmtDate, fmtDuration } from "../utils/format.js";
 import { POST_DOT_COLORS, POST_DOT_LABELS } from "../utils/tiers.js";
 import { resolveMediaType } from "../analytics.js";
+import { REEL_WATCH_QUADRANT_META } from "../analytics.js";
 
 // ─── Subcomponents ──────────────────────────────────────────────────────────
 // InfoTip — wrapper su @radix-ui/react-tooltip.
@@ -124,6 +125,7 @@ export function ReachWithPostsTooltip({ active, payload, label }) {
 export function ScatterTooltip({ active, payload }) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
+  const dateValid = d.date && !Number.isNaN(new Date(d.date).getTime());
   return (
     <div
       className="glass rounded-xl p-3 text-xs max-w-xs"
@@ -137,7 +139,9 @@ export function ScatterTooltip({ active, payload }) {
           loading="lazy"
         />
       )}
-      <div className="text-white/50 text-[10px] mb-1">{fmtDate(d.date)}</div>
+      {dateValid && (
+        <div className="text-white/50 text-[10px] mb-1">{fmtDate(d.date)}</div>
+      )}
       {d.caption && (
         <p className="text-white/80 text-[11px] mb-2 line-clamp-2">
           {d.caption.slice(0, 80)}
@@ -152,22 +156,85 @@ export function ScatterTooltip({ active, payload }) {
         <div>
           <span className="text-white/50">ER</span>
           <span className="text-white font-semibold ml-1">
-            {d.y.toFixed(1)}%
+            {d.y != null ? `${d.y.toFixed(1)}%` : "—"}
           </span>
         </div>
         <div>
           <span className="text-white/50">reach/g</span>
           <span className="text-white font-semibold ml-1">
-            {fmt(d.velocity7d)}/g
+            {d.velocity7d != null ? `${fmt(d.velocity7d)}/g` : "—"}
+          </span>
+        </div>
+        {d.quadrant && (
+          <div className="col-span-2">
+            <span className="text-white/50">quadrant</span>
+            <span className="text-white font-semibold ml-1">{d.quadrant}</span>
+            {d.outlierFlag && (
+              <span className="ml-2 text-[#EDE5D0] uppercase">outlier</span>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Tooltip dedicato allo scatter Reel: x=views, y=watch medio per view (s).
+// Mostra anche il tempo totale di visualizzazione del reel, che è la
+// "scala" del punto (= view × watch).
+export function ReelWatchTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  const dateValid = d.date && !Number.isNaN(new Date(d.date).getTime());
+  const qm = d.quadrant ? REEL_WATCH_QUADRANT_META[d.quadrant] : null;
+  return (
+    <div
+      className="glass rounded-xl p-3 text-xs max-w-xs"
+      style={{ fontFamily: "JetBrains Mono" }}
+    >
+      {d.thumb && (
+        <img
+          src={d.thumb}
+          alt=""
+          className="w-full h-32 object-cover rounded-lg mb-2"
+          loading="lazy"
+        />
+      )}
+      {dateValid && (
+        <div className="text-white/50 text-[10px] mb-1">{fmtDate(d.date)}</div>
+      )}
+      {d.caption && (
+        <p className="text-white/80 text-[11px] mb-2 line-clamp-2">
+          {d.caption.slice(0, 80)}
+          {d.caption.length > 80 ? "…" : ""}
+        </p>
+      )}
+      <div className="grid grid-cols-2 gap-1 text-[10px]">
+        <div>
+          <span className="text-white/50">views</span>
+          <span className="text-white font-semibold ml-1">{fmt(d.x)}</span>
+        </div>
+        <div>
+          <span className="text-white/50">watch</span>
+          <span className="text-white font-semibold ml-1">
+            {d.y != null ? `${d.y.toFixed(d.y >= 10 ? 0 : 1)}s` : "—"}
           </span>
         </div>
         <div className="col-span-2">
-          <span className="text-white/50">quadrant</span>
-          <span className="text-white font-semibold ml-1">{d.quadrant}</span>
-          {d.outlierFlag && (
-            <span className="ml-2 text-[#EDE5D0] uppercase">outlier</span>
-          )}
+          <span className="text-white/50">tempo totale</span>
+          <span className="text-white font-semibold ml-1">
+            {d.totalWatchMs != null ? fmtDuration(d.totalWatchMs) : "—"}
+          </span>
         </div>
+        {qm && (
+          <div className="col-span-2">
+            <span className="text-white/50">quadrant</span>
+            <span className="text-white font-semibold ml-1">{qm.label}</span>
+            {d.outlierFlag && (
+              <span className="ml-2 text-[#EDE5D0] uppercase">outlier</span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

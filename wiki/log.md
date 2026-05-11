@@ -12,6 +12,50 @@ Tipi di kind:
 
 ---
 
+## [2026-05-08] feat | Scatter "reel quality" — views × watch medio
+
+Aggiunto secondo scatter sotto post analysis: solo reel del periodo con `video_view_total_time` non-null, asse X = views totali (latest), asse Y = watch medio per view (= vtt / views / 1000, secondi). Mediane come split → 4 quadranti:
+
+- **hit** alte views / alto watch · cream — viral + ben fatto
+- **scroll** alte views / basso watch · terracotta — arriva ma non trattiene
+- **retained** basse views / alto watch · sage — capolavoro poco distribuito (rilancialo)
+- **miss** basse views / basso watch · soft terra — né gancio né distribuzione
+
+Outlier flag Tukey 1.5·IQR per evidenziare i hit veri. Sezione si nasconde sotto i 2 reel (split mediano senza senso). Tooltip dedicato `ReelWatchTooltip` mostra views/watch/tempo totale/quadrant.
+
+`deriveReelWatchMeta(points)` in `src/analytics.js` riusa median/quantile esistenti.
+
+## [2026-05-08] refactor | Coerenza Tempo/Views/Watch + Range >30g via DB + outlier tooltip
+
+Tre fix consecutivi all'overview:
+
+**1. Coerenza Tempo reel / Views / Watch medio.** Prima i tre numeri nella stessa rate strip non quadravano matematicamente tra loro:
+- Tempo = somma DELTA `video_view_total_time` osservato nel periodo
+- Views = somma views lifetime di tutti i video-like (REELS + VIDEO)
+- Avg = media ARITMETICA degli `avg_watch_time` IG dei reel
+
+Esempio reale (7g, 3 reel): tempo 16h29m, views 8.7K → tempo/views = 6.8s/view, ma il pill mostrava 9.5s (= media degli avg IG). I tre numeri non si parlavano e l'utente ragionevole faceva la divisione mentale e vedeva la discrepanza.
+
+Ora uniformati a un solo modello — **lifetime sui reel pubblicati nel periodo**:
+- Tempo = Σ `video_view_total_time` (latest snapshot) dei reel del periodo
+- Views = Σ `views` (latest snapshot) DEGLI STESSI REEL (era REELS+VIDEO, ora REELS-only per coerenza)
+- Avg = Tempo ÷ Views
+
+Tradeoff accettato: persa la semantica "delta accumulato durante la finestra"; vinta la leggibilità delle tre metriche insieme. ADR 008 da rivedere quando si tocca.
+
+**2. Range > 30 giorni.** Graph API `/insights` rifiuta `since/until` con span > 30g (errore #100 "There cannot be more than 30 days"). Prima il dashboard mostrava 6 metriche con errori sulla card di warning. Ora: sopra soglia salta le chiamate Graph e ricomputa totali + reach daily da `daily_snapshot` di Turso (caricato via `/api/dev/history` in dev, già pre-renderizzato in `data.json` in prod). Il sum-of-daily è approssimato per reach (uniqueness mensile reale ≠ Σ daily) ma è quello che la Graph API stessa farebbe; meglio approssimato che vuoto.
+
+**3. ScatterTooltip outlier monco.** L'overlay `scatterOutliers` esportava solo `{x,y,z,id}` — quindi quando hoveravi sul reel-outlier (badge "OUTLIER") il tooltip riceveva un payload privo di data, caption, thumbnail, velocity, quadrant. Il layer base sotto aveva tutto ma l'outlier overlay intercettava l'hover. Allineato il payload con quello di `scatterByType`.
+
+## [2026-05-08] refactor | Overview: KPI hero a 4 (no Video), Views nella rate strip, curva follower filtrata, ScatterTooltip robusto
+
+Tre fix all'overview:
+
+1. **KPI hero**: rimossa la card "Video" (formato in disuso su IG 2026, era rumore). Prima riga ora a 4 card: Follower · Reels · Carousel · Foto.
+2. **Rate strip**: aggiunta card "Views" come 5° tile — `Σ views` dei contenuti video (Reels + Video feed) nel periodo, con delta vs periodo precedente. Riga ora a 5 card.
+3. **Curva follower**: la sparkline nella KpiCard "Followers" ora rispetta il `dateRange` (prima mostrava sempre tutto lo storico, ignorando il filtro). Il "live" in coda viene appeso solo se la finestra include oggi.
+4. **ScatterTooltip**: nasconde data/quadrant/percentuali quando i dati sono mancanti (prima mostrava "Invalid Date" sui post senza timestamp valido + crashava se `d.y` era null).
+
 ## [2026-05-08] refactor | Fix watch time reel: ora rispetta il periodo
 
 Bug nel KPI "Tempo totale visualizzazione reel" su [App.jsx](../ig-dashboard/src/App.jsx) (useMemo `reelTotalWatchMs`): il delta `lastObs - firstObs` ignorava il bound inferiore `sinceMs`. `firstObs` era sempre il primissimo snapshot esistente del reel, `lastObs` il più recente ≤ `untilMs`. Risultato: il numero non cambiava al variare del periodo selezionato (7/30/90gg).

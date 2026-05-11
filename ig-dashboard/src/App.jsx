@@ -42,6 +42,7 @@ import { generateFakeData, isFakeToken } from "./fakeData.js";
 import {
   deriveContentMix,
   derivePostAnalytics,
+  deriveReelWatchMeta,
   deriveScatterMeta,
   isVideoLikeMedia,
   metricOf,
@@ -54,6 +55,7 @@ import {
   InfoTip,
   ReachWithPostsTooltip,
   ScatterTooltip,
+  ReelWatchTooltip,
 } from "./components/tooltips.jsx";
 import {
   StoriesStrip,
@@ -349,6 +351,14 @@ export default function App() {
         const sincePrev = since - span;
         const untilPrev = since;
 
+        // Graph API /insights non accetta finestre > 30g (#100). Sopra soglia
+        // calcoliamo totali e reach daily dal daily_snapshot di Turso (caricato
+        // via /api/dev/history più sotto) — l'unica fonte che ha lo storico
+        // oltre 30g. La conseguenza: i totali sono sum-of-daily (≠ unique
+        // mensile reale), già etichettati con "*" via computeTotalsFromDaily.
+        const GRAPH_INSIGHTS_MAX_SPAN_S = 30 * 86400;
+        const useDbForTotals = span > GRAPH_INSIGHTS_MAX_SPAN_S;
+
         const metrics = [
           "reach",
           "profile_views",
@@ -380,25 +390,32 @@ export default function App() {
           return out;
         };
 
-        const [totals, totalsPrev] = await Promise.all([
-          fetchTotals(since, until, "cur"),
-          fetchTotals(sincePrev, untilPrev, "prev"),
-        ]);
+        if (useDbForTotals) {
+          // Setter provvisori vuoti — vengono sovrascritti dopo che
+          // /api/dev/history (più sotto) ci passa daily_snapshot.
+          setInsights({ totals: {}, reachDaily: [] });
+          setInsightsPrev({ totals: {} });
+        } else {
+          const [totals, totalsPrev] = await Promise.all([
+            fetchTotals(since, until, "cur"),
+            fetchTotals(sincePrev, untilPrev, "prev"),
+          ]);
 
-        // Reach daily time series (current period)
-        let reachDaily = [];
-        try {
-          const url = `${API}/${igUserId}/insights?metric=reach&period=day&since=${since}&until=${until}&access_token=${TOKEN}`;
-          const r = await fetch(url);
-          const j = await r.json();
-          if (!j.error) reachDaily = j.data?.[0]?.values || [];
-          else warns.push(`reach daily: ${j.error.message}`);
-        } catch (e) {
-          warns.push(`reach daily: ${e.message}`);
+          // Reach daily time series (current period)
+          let reachDaily = [];
+          try {
+            const url = `${API}/${igUserId}/insights?metric=reach&period=day&since=${since}&until=${until}&access_token=${TOKEN}`;
+            const r = await fetch(url);
+            const j = await r.json();
+            if (!j.error) reachDaily = j.data?.[0]?.values || [];
+            else warns.push(`reach daily: ${j.error.message}`);
+          } catch (e) {
+            warns.push(`reach daily: ${e.message}`);
+          }
+
+          setInsights({ totals, reachDaily });
+          setInsightsPrev({ totals: totalsPrev });
         }
-
-        setInsights({ totals, reachDaily });
-        setInsightsPrev({ totals: totalsPrev });
 
         // Media + per-post insights
         const mediaFields =
@@ -496,7 +513,8 @@ export default function App() {
           if (histRes.ok) {
             const hist = await histRes.json();
             if (!hist.error) {
-              if (Array.isArray(hist.followerTrend)) setFollowerTrend(hist.followerTrend);
+              const daily = Array.isArray(hist.followerTrend) ? hist.followerTrend : [];
+              if (daily.length) setFollowerTrend(daily);
               if (hist.postHistory && typeof hist.postHistory === "object") setPostHistory(hist.postHistory);
               if (hist.storyHistory && typeof hist.storyHistory === "object") setStoryHistory(hist.storyHistory);
               // Sovrascrivi la lista stories con l'archivio Turso (Graph API
@@ -504,9 +522,25 @@ export default function App() {
               if (Array.isArray(hist.stories) && hist.stories.length > 0) {
                 setStories(hist.stories);
               }
+              // Fallback per i range > 30g: la Graph API rifiuta, calcoliamo
+              // da daily_snapshot. computeTotalsFromDaily/filterReachDaily
+              // accettano lo stesso formato di hist.followerTrend.
+              if (useDbForTotals && daily.length) {
+                setInsights({
+                  totals: computeTotalsFromDaily(daily, since, until),
+                  reachDaily: filterReachDaily(daily, since, until),
+                });
+                setInsightsPrev({
+                  totals: computeTotalsFromDaily(daily, sincePrev, untilPrev),
+                });
+              }
             } else {
               warns.push(`history dev: ${hist.error}`);
             }
+          } else if (useDbForTotals) {
+            warns.push(
+              "Range > 30g: serve TURSO_DATABASE_URL in .env (Graph API limitata a 30g)."
+            );
           }
         } catch {
           // /api/dev/history non disponibile (e.g. build statico) — silent
@@ -618,6 +652,61 @@ export default function App() {
     [enrichedPosts]
   );
 
+  // Datapoint per il secondo scatter (Reel: views × watch). Solo reel del
+  // periodo con `video_view_total_time` non-null nel latest snapshot — gli
+  // altri non hanno dati di watch (NULL per non-reel + reel pre-aprile 2026).
+  const reelWatchPoints = useMemo(() => {
+    const out = [];
+    for (const p of enrichedPosts) {
+      if (p.mediaType !== "REELS") continue;
+      const hist = postHistory?.[p.id] || [];
+      let lastVtt = null;
+      let lastViews = null;
+      for (let i = hist.length - 1; i >= 0; i--) {
+        if (hist[i].video_view_total_time != null) {
+          lastVtt = hist[i].video_view_total_time;
+          lastViews = hist[i].views || 0;
+          break;
+        }
+      }
+      if (lastVtt == null || lastViews <= 0) continue;
+      out.push({
+        id: p.id,
+        views: lastViews,
+        avgWatchSec: lastVtt / lastViews / 1000,
+        totalWatchMs: lastVtt,
+        caption: p.caption,
+        permalink: p.permalink,
+        thumb: p.thumbnail_url || p.media_url,
+        date: p.timestamp,
+      });
+    }
+    return out;
+  }, [enrichedPosts, postHistory]);
+
+  const reelWatchMeta = useMemo(
+    () => deriveReelWatchMeta(reelWatchPoints),
+    [reelWatchPoints]
+  );
+
+  const reelWatchScatterData = useMemo(
+    () =>
+      reelWatchPoints.map((p) => ({
+        ...p,
+        x: p.views,
+        y: p.avgWatchSec,
+        z: p.totalWatchMs,
+        quadrant: reelWatchMeta.byId?.[p.id]?.quadrant || "miss",
+        outlierFlag: reelWatchMeta.byId?.[p.id]?.outlierFlag || false,
+      })),
+    [reelWatchPoints, reelWatchMeta]
+  );
+
+  const reelWatchOutliers = useMemo(
+    () => reelWatchScatterData.filter((p) => p.outlierFlag),
+    [reelWatchScatterData]
+  );
+
   const analyzedPosts = useMemo(() => {
     return enrichedPosts.map((post) => ({
       ...post,
@@ -626,124 +715,59 @@ export default function App() {
     }));
   }, [enrichedPosts, scatterMeta]);
 
-  // Avg watch time sui reel del periodo (s) + total view time OSSERVATO nel
-  // periodo (ms) + count reel pubblicati.
+  // Watch metrics sui reel pubblicati nel periodo.
   //
-  // - Avg: media degli avg_watch_time dei reel pubblicati nel periodo.
-  // - Total: somma dei delta video_view_total_time CHE ABBIAMO OSSERVATO sui
-  //   nostri snapshot nel periodo. Per ogni reel: delta = ultimo snapshot
-  //   non-null in periodo MENO primo snapshot non-null in periodo. Niente
-  //   baseline=0 inferita: se non abbiamo snapshot pre-periodo (o pre-
-  //   pubblicazione) il watch time accumulato prima del primo snapshot non
-  //   viene mai contato. Onesto, undercount visibile finché non maturiamo
-  //   abbastanza storia. Tra ~7 giorni di cron orario, l'undercount si
-  //   azzera per qualunque reel attivo.
-  // - Reel count: numero di reel pubblicati nel periodo (informativo, dà
-  //   scala al totale: 6h da 2 reel ≠ 6h da 10).
-  // Vedi ADR 008.
+  // Modello: tre numeri devono essere coerenti tra loro per non confondere
+  // l'utente che li guarda insieme nella stessa rate strip:
+  //   - Tempo totale = somma `video_view_total_time` (latest snapshot) dei
+  //     reel pubblicati nel periodo
+  //   - Views totali = somma `views` (latest snapshot) degli stessi reel
+  //   - Watch medio = tempo totale / views totali
+  //
+  // Tutti "lifetime" sui contenuti del periodo. Quando l'utente cambia il
+  // filtro data cambia l'insieme dei reel inclusi, quindi i numeri variano
+  // organicamente. Storicamente avevamo provato la versione "delta osservato
+  // nel periodo" — sembrava più onesta ma rendeva l'avg derivato (≠ avg IG
+  // mostrato per reel) e confondeva il rapporto tempo/views.
+  // Vedi ADR 008 + wiki/log entry 2026-05-08.
   const {
     reelAvgWatchSec,
     reelTotalWatchMs,
     reelTotalPlays,
     reelPublishedCount,
-    reelObservedSinceTs,
   } = useMemo(() => {
       const reelsInPeriod = analyzedPosts.filter((p) => p.mediaType === "REELS");
-
-      // Avg sui reel pubblicati nel periodo (qualità media)
-      const avgSamples = [];
+      let totalWatchMs = 0;
+      let totalViews = 0;
+      let contributingReels = 0;
       for (const p of reelsInPeriod) {
         const hist = postHistory?.[p.id] || [];
-        const last = hist[hist.length - 1];
-        if (last?.avg_watch_time != null) avgSamples.push(last.avg_watch_time / 1000);
-      }
-      const avg = avgSamples.length
-        ? avgSamples.reduce((s, v) => s + v, 0) / avgSamples.length
-        : null;
-
-      // Total OSSERVATO: somma di (lastObs - firstObs) su tutti i reel attivi
-      // nel periodo (= che hanno ≥1 snapshot non-null con t ≤ untilMs).
-      const sinceMs = sinceUnix * 1000;
-      const untilMs = untilUnix * 1000;
-      let totalDeltaMs = 0;
-      let contributingReels = 0;
-      let totalPlays = 0;
-      // Earliest observation: il `firstObs` più vecchio tra i reel attivi.
-      // Se è dentro il periodo richiesto significa che la finestra coperta
-      // dai nostri snapshot è più stretta del label "ultimi N giorni" — il
-      // subtitle dovrà mostrare "dal DD MMM" per onestà.
-      let earliestObsTs = null;
-      for (const p of posts) {
-        if (resolveMediaType(p) !== "REELS") continue;
-        const hist = postHistory?.[p.id] || [];
-        if (!hist.length) continue;
-
-        // Baseline = video_view_total_time all'INIZIO del periodo. Preferiamo
-        // l'ultimo snapshot con t < sinceMs (così copriamo l'intera finestra).
-        // Fallback al primo snapshot in periodo (reel pubblicato dopo sinceMs
-        // o storia troppo corta): perdiamo la coda iniziale di watch time, ma
-        // è onesto — niente baseline=0 inferita.
-        let preBaseline = null;
-        let preBaselineViews = null;
-        let firstInPeriod = null;
-        let firstInPeriodViews = null;
-        let firstInPeriodTs = null;
-        let lastObs = null;
+        // Ultimo snapshot non-null per video_view_total_time (i NULL legacy
+        // pre-aprile 2026 vengono saltati: undercount onesto sui reel vecchi).
+        let lastVtt = null;
         let lastViews = null;
-        for (const e of hist) {
-          if (e.t > untilMs) break;
-          if (e.video_view_total_time == null) continue;
-          if (e.t < sinceMs) {
-            preBaseline = e.video_view_total_time;
-            preBaselineViews = e.views || 0;
-            continue;
-          }
-          if (firstInPeriod == null) {
-            firstInPeriod = e.video_view_total_time;
-            firstInPeriodViews = e.views || 0;
-            firstInPeriodTs = e.t;
-          }
-          lastObs = e.video_view_total_time;
-          lastViews = e.views || 0;
-        }
-        if (lastObs == null) continue;
-
-        let baseline, baselineViews, effectiveStartTs;
-        if (preBaseline != null) {
-          baseline = preBaseline;
-          baselineViews = preBaselineViews;
-          effectiveStartTs = sinceMs;
-        } else if (firstInPeriod != null) {
-          baseline = firstInPeriod;
-          baselineViews = firstInPeriodViews;
-          effectiveStartTs = firstInPeriodTs;
-        } else {
-          continue;
-        }
-
-        const deltaMs = lastObs - baseline;
-        const deltaViews = (lastViews || 0) - (baselineViews || 0);
-        if (deltaMs > 0) {
-          totalDeltaMs += deltaMs;
-          contributingReels += 1;
-          if (deltaViews > 0) totalPlays += deltaViews;
-          if (earliestObsTs == null || effectiveStartTs < earliestObsTs) {
-            earliestObsTs = effectiveStartTs;
+        for (let i = hist.length - 1; i >= 0; i--) {
+          if (hist[i].video_view_total_time != null) {
+            lastVtt = hist[i].video_view_total_time;
+            lastViews = hist[i].views || 0;
+            break;
           }
         }
+        if (lastVtt == null) continue;
+        totalWatchMs += lastVtt;
+        totalViews += lastViews;
+        contributingReels += 1;
       }
-
       return {
-        reelAvgWatchSec: avg,
-        reelTotalWatchMs: contributingReels ? totalDeltaMs : null,
-        reelTotalPlays: contributingReels ? totalPlays : null,
+        reelTotalWatchMs: contributingReels ? totalWatchMs : null,
+        reelTotalPlays: contributingReels ? totalViews : null,
+        reelAvgWatchSec:
+          contributingReels && totalViews > 0
+            ? totalWatchMs / totalViews / 1000
+            : null,
         reelPublishedCount: reelsInPeriod.length,
-        // Solo se la prima osservazione è DOPO l'inizio del periodo richiesto:
-        // segnale che il numero copre meno giorni di quanti il label dichiari.
-        reelObservedSinceTs:
-          earliestObsTs != null && earliestObsTs > sinceMs ? earliestObsTs : null,
       };
-    }, [analyzedPosts, posts, postHistory, sinceUnix, untilUnix]);
+    }, [analyzedPosts, postHistory]);
 
   const sortedPosts = useMemo(() => {
     const arr = [...analyzedPosts];
@@ -793,6 +817,13 @@ export default function App() {
           y: post.er,
           z: post.interactions,
           id: post.id,
+          caption: post.caption,
+          permalink: post.permalink,
+          thumb: post.thumbnail_url || post.media_url,
+          date: post.timestamp,
+          velocity7d: post.velocity7d,
+          quadrant: post.quadrant,
+          outlierFlag: post.outlierFlag,
         })),
     [analyzedPosts]
   );
@@ -874,6 +905,7 @@ export default function App() {
     const prevUntilMs = sinceUnix * 1000;
     let reachSum = 0;
     let interactionsSum = 0;
+    let reelViewsSum = 0;
     let n = 0;
     for (const p of posts) {
       const t = new Date(p.timestamp).getTime();
@@ -883,11 +915,18 @@ export default function App() {
       const it = a.interactions ?? postInteractions(p) ?? 0;
       reachSum += r;
       interactionsSum += it;
+      // Views REEL-only: coerente con il calcolo `reelTotalPlays` del periodo
+      // corrente, così il delta confronta mele con mele (Σ views reel
+      // pubblicati nel periodo, latest snapshot).
+      if (resolveMediaType(p) === "REELS") {
+        reelViewsSum += a.views ?? metricOf(p, "views") ?? 0;
+      }
       n += 1;
     }
     if (!n) return null;
     return {
       engagementRate: reachSum > 0 ? (interactionsSum / reachSum) * 100 : null,
+      reelViewsTotal: reelViewsSum,
       n,
     };
   }, [posts, postAnalyticsById, sinceUnix, untilUnix]);
@@ -1060,20 +1099,33 @@ export default function App() {
               <Tabs.Content value="overview" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">
 
             {/* Hero KPIs */}
-            <section className="grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-10 fadein">
+            <section className="grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-4 mb-10 fadein">
               <KpiCard
                 icon={<Users size={16} />}
                 label="Followers"
                 value={fmt(account.followers_count)}
                 sparkline={(() => {
-                  const base = followerTrend.map((d) => ({
-                    reach: d.followers,
-                    date: fmtDate(d.date),
-                  }));
+                  // Filtro per il dateRange attivo: la curva deve seguire il
+                  // filtro come il resto della dashboard. Le date in
+                  // followerTrend sono YYYY-MM-DD (Europe/Rome).
+                  const sinceMs = sinceUnix * 1000;
+                  const untilMs = untilUnix * 1000;
+                  const base = followerTrend
+                    .filter((d) => {
+                      const t = new Date(`${d.date}T00:00:00Z`).getTime();
+                      return t >= sinceMs && t <= untilMs;
+                    })
+                    .map((d) => ({
+                      reach: d.followers,
+                      date: fmtDate(d.date),
+                    }));
                   const live = account.followers_count;
-                  // Appendi il valore live in coda se differisce dall'ultimo
-                  // daily (la curva chiude sul numero che vedi nel KPI).
+                  // Appendi il valore live in coda se il periodo include oggi
+                  // e l'ultimo daily è diverso dal numero live (la curva
+                  // chiude sul valore mostrato nel KPI).
+                  const includesToday = untilMs >= Date.now() - 86400000;
                   if (
+                    includesToday &&
                     live != null &&
                     base.length > 0 &&
                     base[base.length - 1].reach !== live
@@ -1100,13 +1152,6 @@ export default function App() {
                 info={`Numero di carousel pubblicati negli ultimi ${dateRange} giorni.`}
               />
               <KpiCard
-                icon={<Video size={16} />}
-                label={`Video · ${dateRange}g`}
-                value={String(analyzedPosts.filter((p) => p.mediaType === "VIDEO").length)}
-                accent="from-[#D98B6F] to-[#B8823A]"
-                info={`Numero di video feed (non Reels) pubblicati negli ultimi ${dateRange} giorni. Su IG 2026 il formato Video feed è in disuso — la spinta algoritmica va ai Reels.`}
-              />
-              <KpiCard
                 icon={<ImageIcon size={16} />}
                 label={`Foto · ${dateRange}g`}
                 value={String(analyzedPosts.filter((p) => p.mediaType === "IMAGE").length)}
@@ -1115,22 +1160,22 @@ export default function App() {
               />
             </section>
 
-            {/* Rate strip — reach, tempo reel (watch totale + qualità gancio),
-                engagement post-based, share rate. Save rate rimosso (su micro-
-                account il segnale è troppo zero-inflated per essere actionable). */}
-            <section className="grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-4 gap-3 mb-8 fadein">
+            {/* Rate strip — ordine narrativo: quanti l'hanno visto (views),
+                quanto l'hanno guardato (tempo reel), a quanti utenti unici
+                arriva (reach), quanto reagiscono (engagement), quanto lo
+                inoltrano (share). Save rate rimosso: su micro-account il
+                segnale è troppo zero-inflated per essere actionable. */}
+            <section className="grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-8 fadein">
               <RateCard
-                icon={<TrendingUp size={14} />}
-                label="Reach"
-                value={fmt(totals.reach)}
-                deltaPct={delta(totals.reach, totalsPrev.reach)}
-                tier={reachRateTier(reachRate)}
-                tierLabel={
-                  reachRate != null
-                    ? `${reachRate.toFixed(0)}% dei follower`
+                icon={<Eye size={14} />}
+                label={`Views · ${dateRange}g`}
+                value={fmt(reelTotalPlays)}
+                deltaPct={
+                  reelTotalPlays != null && postMetricsAggPrev?.reelViewsTotal != null
+                    ? delta(reelTotalPlays, postMetricsAggPrev.reelViewsTotal)
                     : null
                 }
-                info={`Account UNICI che hanno visto almeno un contenuto negli ultimi ${dateRange} giorni. Un utente che vede 10 post conta 1 (dedupe automatico Meta). Il pill "X% dei follower" è il reach rate: quanto hai bucato la cerchia. Viral >100%, strong 30-100%, normal 10-30%, low <10%.`}
+                info={`Somma delle visualizzazioni dei reel pubblicati negli ultimi ${dateRange} giorni (latest snapshot). Coerente con la card "Tempo reel" qui a fianco: tempo / views = watch medio mostrato nel pill. Su micro-account cresce a colpi: un reel virale può raddoppiare il totale del periodo.`}
               />
               <RateCard
                 icon={<Clock size={14} />}
@@ -1144,7 +1189,20 @@ export default function App() {
                 }
                 legend={reelAvgWatchSec != null ? WATCH_TIME_TIERS_LEGEND : null}
                 legendCurrent={watchTimeTier(reelAvgWatchSec)?.label}
-                info={`Tempo TOTALE di visualizzazione osservato sui reel del periodo (${reelPublishedCount} reel pubblicati${reelObservedSinceTs ? `, finestra dal ${fmtDate(reelObservedSinceTs)}` : ""}). Il pill mostra il tempo MEDIO per visualizzazione (avg_watch_time): <4s = il gancio iniziale non funziona, 4-10s = ok, >15s = il reel viene davvero guardato. La metrica avg esiste su Turso solo da fine aprile 2026, possibile undercount sui reel più vecchi del nostro storico.`}
+                info={`Tempo TOTALE di visualizzazione accumulato dai reel pubblicati negli ultimi ${dateRange} giorni (${reelPublishedCount} reel). Il pill mostra il watch medio per visualizzazione = tempo / views, coerente con i due tile a fianco: <4s = il gancio non funziona, 4-8s = avg, 8-15s = good, >15s = il reel viene davvero guardato. Possibile undercount sui reel più vecchi del nostro storico (la metrica nel DB è popolata da fine aprile 2026).`}
+              />
+              <RateCard
+                icon={<TrendingUp size={14} />}
+                label="Reach"
+                value={fmt(totals.reach)}
+                deltaPct={delta(totals.reach, totalsPrev.reach)}
+                tier={reachRateTier(reachRate)}
+                tierLabel={
+                  reachRate != null
+                    ? `${reachRate.toFixed(0)}% dei follower`
+                    : null
+                }
+                info={`Account UNICI che hanno visto almeno un contenuto negli ultimi ${dateRange} giorni. Un utente che vede 10 post conta 1 (dedupe automatico Meta). Il pill "X% dei follower" è il reach rate: quanto hai bucato la cerchia. Viral >100%, strong 30-100%, normal 10-30%, low <10%.`}
               />
               <RateCard
                 icon={<Activity size={14} />}
@@ -1558,15 +1616,117 @@ export default function App() {
                     ))}
                   </div>
                 </div>
+              </section>
+            )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {sortedPosts.slice(0, 12).map((p, i) => (
-                    <PostCard
-                      key={p.id}
-                      post={p}
-                      rank={i + 1}
-                    />
-                  ))}
+            {/* Reel quality: views × watch medio. Solo reel del periodo con
+                video_view_total_time non-null. Stessa idea dello scatter
+                primario ma su due metriche di formato: "arriva a tanti?"
+                (asse X views) e "lo guardano davvero?" (asse Y watch). */}
+            {reelWatchPoints.length >= 2 && (
+              <section className="mb-10 fadein">
+                <div className="flex items-baseline justify-between flex-wrap gap-3 mb-6">
+                  <div>
+                    <h2 className="display-font text-3xl text-white font-light">
+                      <span className="italic">reel</span> quality
+                    </h2>
+                    <p className="text-xs text-white/40 mono-font mt-1">
+                      views × watch medio · {reelWatchPoints.length} reel · quadranti mediani
+                    </p>
+                  </div>
+                </div>
+
+                <div className="glass rounded-3xl p-5 sm:p-6 md:p-8">
+                  <div className="overflow-x-auto no-scrollbar">
+                    <div className="min-w-[560px] h-[320px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ScatterChart margin={{ top: 10, right: 20, bottom: 10, left: 10 }}>
+                          <CartesianGrid
+                            strokeDasharray="3 3"
+                            stroke="rgba(255,255,255,0.05)"
+                          />
+                          <XAxis
+                            type="number"
+                            dataKey="x"
+                            name="Views"
+                            stroke="rgba(255,255,255,0.3)"
+                            tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }}
+                            tickFormatter={fmt}
+                          />
+                          <YAxis
+                            type="number"
+                            dataKey="y"
+                            name="Watch medio"
+                            stroke="rgba(255,255,255,0.3)"
+                            tick={{ fontSize: 11, fontFamily: "JetBrains Mono" }}
+                            tickFormatter={(v) => `${v.toFixed(v >= 10 ? 0 : 1)}s`}
+                          />
+                          <ZAxis type="number" dataKey="z" range={[40, 220]} />
+                          <ReferenceLine
+                            x={reelWatchMeta.viewsMedian}
+                            stroke="rgba(237,229,208,0.25)"
+                            strokeDasharray="4 4"
+                          />
+                          <ReferenceLine
+                            y={reelWatchMeta.watchMedian}
+                            stroke="rgba(127,179,163,0.25)"
+                            strokeDasharray="4 4"
+                          />
+                          <Tooltip
+                            content={<ReelWatchTooltip />}
+                            cursor={{ strokeDasharray: "3 3", stroke: "rgba(255,255,255,0.2)" }}
+                          />
+                          <Scatter
+                            name="Reel"
+                            data={reelWatchScatterData}
+                            fill="#D4A85C"
+                            fillOpacity={0.75}
+                            stroke="#D4A85C"
+                            strokeWidth={1}
+                          />
+                          {reelWatchOutliers.length > 0 && (
+                            <Scatter
+                              name="Outlier"
+                              data={reelWatchOutliers}
+                              fill="transparent"
+                              stroke="#EDE5D0"
+                              strokeWidth={2}
+                            />
+                          )}
+                        </ScatterChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-4 mt-4 text-[11px] mono-font text-white/60">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "#D4A85C" }} />
+                      Reel
+                    </div>
+                    {reelWatchOutliers.length > 0 && (
+                      <div className="flex items-center gap-2 text-[#EDE5D0]">
+                        <span className="w-2.5 h-2.5 rounded-full border border-[#EDE5D0]" />
+                        outlier
+                      </div>
+                    )}
+                    <div className="text-white/40 ml-auto">
+                      mediana views {fmt(reelWatchMeta.viewsMedian)} · mediana watch {reelWatchMeta.watchMedian.toFixed(reelWatchMeta.watchMedian >= 10 ? 0 : 1)}s
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 mt-4">
+                    {reelWatchMeta.quadrants.map((quadrant) => (
+                      <span
+                        key={quadrant.key}
+                        className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-[10px] mono-font uppercase tracking-wider"
+                        style={{
+                          backgroundColor: `${quadrant.color}12`,
+                          color: quadrant.color,
+                        }}
+                      >
+                        <span>{quadrant.label}</span>
+                        <span className="text-white/40">{quadrant.count}</span>
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </section>
             )}
@@ -1670,6 +1830,29 @@ export default function App() {
                   il reach medio. Con pochi post per slot, trattare come
                   indicativo.
                 </p>
+              </section>
+            )}
+
+            {/* Carousel post in fondo: dopo aver letto i due scatter + la
+                heatmap, l'utente va sul contenuto specifico. Ordinamento
+                pilotato dalle tab `sortMode` ancora più in alto. */}
+            {enrichedPosts.length > 0 && (
+              <section className="mb-10 fadein">
+                <h2 className="display-font text-3xl text-white font-light mb-2">
+                  <span className="italic">top</span> post
+                </h2>
+                <p className="text-xs text-white/40 mono-font mb-6">
+                  ordinati per {sortMode} · primi 12 del periodo
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {sortedPosts.slice(0, 12).map((p, i) => (
+                    <PostCard
+                      key={p.id}
+                      post={p}
+                      rank={i + 1}
+                    />
+                  ))}
+                </div>
               </section>
             )}
               </Tabs.Content>

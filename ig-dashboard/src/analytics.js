@@ -21,6 +21,16 @@ export const QUADRANT_META = {
   weak: { label: "low reach / low ER", color: "#D98B6F" },
 };
 
+// Quadranti reel: views × watch medio (s). Stessa codifica colori di
+// QUADRANT_META per affinità visiva ma label dedicati alla domanda reel
+// ("è arrivato a tanti?" × "lo guardano davvero?").
+export const REEL_WATCH_QUADRANT_META = {
+  hit: { label: "alte views / alto watch", color: "#EDE5D0" },
+  scroll: { label: "alte views / basso watch", color: "#B8823A" },
+  retained: { label: "basse views / alto watch", color: "#7FB3A3" },
+  miss: { label: "basse views / basso watch", color: "#D98B6F" },
+};
+
 export const metricOf = (post, name) =>
   post.insights?.data?.find((x) => x.name === name)?.values?.[0]?.value ?? 0;
 
@@ -333,6 +343,62 @@ export function deriveScatterMeta(posts) {
         count,
         ...QUADRANT_META[key],
       }))
+      .filter((row) => row.count > 0),
+    byId,
+  };
+}
+
+// Quadranti per scatter reel-specifico (views × watch medio in secondi).
+// Aspetta in input punti {id, views, avgWatchSec}. Mediane come split
+// + threshold Tukey 1.5·IQR per evidenziare outlier "good".
+export function deriveReelWatchMeta(points) {
+  if (!Array.isArray(points) || !points.length) {
+    return {
+      viewsMedian: 0,
+      watchMedian: 0,
+      quadrants: [],
+      byId: {},
+      outlierCount: 0,
+    };
+  }
+
+  const viewsValues = points.map((p) => Number(p.views) || 0);
+  const watchValues = points.map((p) => Number(p.avgWatchSec) || 0);
+  const viewsMedian = median(viewsValues);
+  const watchMedian = median(watchValues);
+
+  const q1V = quantile(viewsValues, 0.25);
+  const q3V = quantile(viewsValues, 0.75);
+  const q1W = quantile(watchValues, 0.25);
+  const q3W = quantile(watchValues, 0.75);
+  const viewsThreshold = q3V + (q3V - q1V) * 1.5;
+  const watchThreshold = q3W + (q3W - q1W) * 1.25;
+
+  const counts = { hit: 0, scroll: 0, retained: 0, miss: 0 };
+  const byId = {};
+
+  for (const p of points) {
+    const quadrant =
+      p.views >= viewsMedian
+        ? p.avgWatchSec >= watchMedian
+          ? "hit"
+          : "scroll"
+        : p.avgWatchSec >= watchMedian
+        ? "retained"
+        : "miss";
+    const outlierFlag =
+      (p.views >= viewsThreshold && p.avgWatchSec >= watchMedian) ||
+      (p.avgWatchSec >= watchThreshold && p.views >= viewsMedian);
+    counts[quadrant] += 1;
+    byId[p.id] = { quadrant, outlierFlag };
+  }
+
+  return {
+    viewsMedian,
+    watchMedian,
+    outlierCount: Object.values(byId).filter((m) => m.outlierFlag).length,
+    quadrants: Object.entries(counts)
+      .map(([key, count]) => ({ key, count, ...REEL_WATCH_QUADRANT_META[key] }))
       .filter((row) => row.count > 0),
     byId,
   };

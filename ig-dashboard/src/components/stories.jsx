@@ -323,15 +323,6 @@ export function StoriesTab({ stories, storyHistory, followersCount }) {
           />
         ))}
       </section>
-
-      <div className="mt-8 text-[11px] text-white/40 mono-font leading-relaxed">
-        <p className="mb-1"><strong>KPI specifici stories</strong> (diversi dai post):</p>
-        <ul className="list-disc list-inside space-y-0.5 ml-1">
-          <li><strong>Reply rate</strong>: replies/reach × 100. Il reply via DM è high-effort, segnale forte di affinità.</li>
-          <li><strong>Navigation/reach</strong>: somma di tap-forward, tap-back, swipe-forward, exits per visione. Valori &gt;1 = molto attive (skip o interazione interna).</li>
-          <li><strong>Drop-off</strong>: ora dalla pubblicazione in cui la curva reach raggiunge il 90% del valore finale = quando la story ha smesso di crescere.</li>
-        </ul>
-      </div>
     </>
   );
 }
@@ -441,21 +432,43 @@ function buildInsights({ aggregates, prevAggregates, enrichedStories, windowDays
 function HighlightCard({ kind, story, avgReach }) {
   const isTop = kind === "top";
   const accent = isTop ? "#7FB3A3" : "#D98B6F";
-  const label = isTop ? "TOP DEL PERIODO" : "FONDO DEL PERIODO";
+  const label = isTop ? "QUELLA CHE HA ATTECCHITO" : "QUELLA CHE È RIMASTA INDIETRO";
   const icon = isTop ? <TrendingUp size={14} /> : <AlertCircle size={14} />;
   const reach = story.reach || 0;
   const ratio = avgReach > 0 ? reach / avgReach : 1;
-  const explanation = isTop
-    ? `${reach} reach (${ratio.toFixed(1)}× la media del periodo)${
-        story.replies > 0
-          ? `, ${story.replies} ${story.replies === 1 ? "risposta" : "risposte"} via DM`
-          : ""
-      }.`
-    : `${reach} reach (${ratio.toFixed(1)}× la media). ${
-        avgReach - reach > 0
-          ? `Sotto la media di ${Math.round(avgReach - reach)} account unici.`
-          : ""
+  const replies = story.replies || 0;
+  const shares = story.shares || 0;
+  const reactions = Math.max(0, (story.total_interactions || 0) - replies);
+
+  // Verdetto: cosa rende questa story il top/bottom?
+  let verdict;
+  if (isTop) {
+    if (replies >= 3) {
+      verdict = `${replies} ${replies === 1 ? "DM" : "DM"} ricevuti: gente che ti scrive in chat, segnale alto di affinità.`;
+    } else if (shares >= 2) {
+      verdict = `${shares} condivisioni in DM: l'hanno passata ad altri, contenuto da "guarda questo".`;
+    } else if (ratio >= 2) {
+      verdict = `Reach ${ratio.toFixed(1)}× la media: l'algoritmo l'ha spinta più del solito.`;
+    } else if (reactions >= 5) {
+      verdict = `${reactions} reactions/sticker: ha attivato la reazione veloce, anche senza DM.`;
+    } else {
+      verdict = `${reach} account unici, sopra la media del periodo (${Math.round(avgReach)}).`;
+    }
+  } else {
+    const diff = Math.round(avgReach - reach);
+    if (reach === 0) {
+      verdict = "Nessun account raggiunto: probabilmente fascia oraria morta o intermittenza algoritmica.";
+    } else if (diff > 0) {
+      verdict = `${reach} account unici, ${diff} sotto la media. ${
+        replies === 0 && reactions === 0
+          ? "Niente interazioni: format poco coinvolgente o slot debole."
+          : "Reach basso ma qualche interazione: ha agganciato chi l'ha vista."
       }`;
+    } else {
+      verdict = `${reach} reach, ${ratio.toFixed(1)}× la media.`;
+    }
+  }
+
   const when = new Date(story.timestamp).toLocaleString("it-IT", {
     day: "2-digit",
     month: "short",
@@ -486,7 +499,7 @@ function HighlightCard({ kind, story, avgReach }) {
           {label}
         </div>
         <div className="text-xs mono-font text-white/60 mb-1.5">{when}</div>
-        <p className="text-sm text-white/85 leading-relaxed">{explanation}</p>
+        <p className="text-sm text-white/85 leading-relaxed">{verdict}</p>
       </div>
     </div>
   );
@@ -661,7 +674,7 @@ export function StoryRow({ story, history, avgReach }) {
             </span>
           )}
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-x-4 gap-y-1 mt-1">
+        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 mt-1">
           <StoryMetric
             label="account unici"
             value={story.reach}
@@ -673,22 +686,32 @@ export function StoryRow({ story, history, avgReach }) {
             sub={replyRate ? replyRate.toFixed(1) + "%" : null}
             info={`Risposte ricevute via DM (sticker domanda, reply diretto allo story). Il "${replyRate ? replyRate.toFixed(1) + "%" : "0%"}" è il reply rate (replies/reach). Aprire la chat e scrivere è high-effort: anche 1% è un segnale forte di affinità.`}
           />
-          <StoryMetric
-            label="navigazione"
-            value={story.navigation}
-            info="Somma delle azioni di navigazione: tap-forward (skip), tap-back (rivedi), swipe via, salto al prossimo account. Numero ambiguo: alto può essere positivo (audience attiva, rivede) o negativo (exit). Va incrociato col reply rate per disambiguare."
-          />
-          <StoryMetric
-            label="condivisioni"
-            value={story.shares}
-            info="Quante volte la story è stata mandata in DM ad altri account. Metrica zero-inflated sulle stories: anche 1 share è notevole."
-          />
-          <StoryMetric
-            label="interazioni"
-            value={story.total_interactions}
-            sub={interRate ? interRate.toFixed(1) + "%" : null}
-            info={`Aggregato di TUTTE le interazioni dirette (replies + reactions + altre). Il "${interRate ? interRate.toFixed(1) + "%" : "0%"}" è interactions/reach × 100. Diverso dal reply rate perche' include anche reazioni rapide (heart, like) che richiedono meno effort.`}
-          />
+          {(story.shares > 0 || story.total_interactions > story.replies) && (
+            <details className="ml-auto group">
+              <summary className="cursor-pointer text-[10px] mono-font text-white/40 hover:text-white/70 list-none flex items-center gap-1">
+                altri segnali
+                <span className="text-[9px] opacity-60 group-open:rotate-90 transition">▸</span>
+              </summary>
+              <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1">
+                <StoryMetric
+                  label="reactions+altro"
+                  value={Math.max(0, (story.total_interactions || 0) - (story.replies || 0))}
+                  sub={interRate ? interRate.toFixed(1) + "% tot" : null}
+                  info={`Tutte le interazioni meno i reply DM = reactions rapide + tap su sticker/sondaggi. Più "leggere" del DM ma comunque segnale. Il "${interRate ? interRate.toFixed(1) + "%" : "0%"}" è total_interactions/reach.`}
+                />
+                <StoryMetric
+                  label="condivisioni"
+                  value={story.shares}
+                  info="Quante volte mandata in DM ad altri. Metrica zero-inflated: anche 1 share è notevole."
+                />
+                <StoryMetric
+                  label="navigazione"
+                  value={story.navigation}
+                  info="Tap-forward (skip) + tap-back (rivedi) + swipe via + exits. Numero ambiguo: alto può essere positivo (audience attiva) o negativo (exit). Incrocia col reply rate per disambiguare."
+                />
+              </div>
+            </details>
+          )}
         </div>
       </div>
       {spark.length >= 2 && (

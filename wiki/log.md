@@ -12,6 +12,15 @@ Tipi di kind:
 
 ---
 
+## [2026-05-13] feat | Stories tab orientata al verdetto
+
+Tab Stories: meno scaffold tecnico, più "cosa ti porti a casa".
+
+- **Highlight rinominati**: "top del periodo" → "quella che ha attecchito" / "fondo del periodo" → "quella che è rimasta indietro". Più diretto del jargon analitico.
+- **Verdetto qualitativo nelle highlight card**: invece di mostrare solo "X reach (1.4× la media)", la card sceglie il *perché* in base alle metriche dominanti — "5 DM ricevuti, gente che ti scrive in chat" / "3 condivisioni, l'hanno passata ad altri" / "reach 2.2× la media, l'algoritmo l'ha spinta" / "reactions a manetta, ha attivato la reazione veloce". Stessa logica per il bottom (niente interazioni → format poco coinvolgente).
+- **StoryRow alleggerita**: prima 5 metriche sempre visibili (account unici · DM · navigazione · condivisioni · interazioni), ora 2 (account unici + DM, le due cose che contano davvero su micro-account) + un dettaglio espandibile `<details>"altri segnali"` quando ci sono shares/reactions non zero. Il drop-off resta solo se anomalo.
+- **Rimosso il blocco didattico finale**: la legenda "KPI specifici stories" che spiegava reply rate / navigation / drop-off — ridondante con i tooltip già presenti. Riduce il rumore in fondo alla tab.
+
 ## [2026-05-13] fix | Restart-aware clamp, audience fallback Turso, tier stories non giudicanti
 
 L'utente ha segnalato 5 punti, 3 codificati qui (gli altri 2 sono UI già toccata + discussione di prodotto su tab Stories):

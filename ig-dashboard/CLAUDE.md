@@ -285,6 +285,17 @@ Monocromatica verde foresta + cream, derivata dal logo:
 - **Non duplicare memorie**: quello che è già in CLAUDE.md non va salvato anche in memory system.
 - **Demo mode va preservato**: `TOKEN=""` in `config.js` deve continuare a funzionare con dati fake, è lo strumento di lavoro sul dashboard.
 
+## Guard-rail anti-regressione (lessons learned)
+
+Errori già fatti in questo progetto, NON ripeterli:
+
+- **TDZ su useState/useMemo in App.jsx**: ogni `useMemo` che legge uno stato deve venire DOPO la `useState` corrispondente nel codice. Vite/Rollup non lo cattura in build, il runtime sì → schermo bianco. App.jsx ha 2 cluster di `useState` (selezione data + altri); se aggiungi una `useMemo` nuova che legge `followerTrend`/`postHistory`/`stories`/`restart`, controlla l'ordine di dichiarazione. Pattern: tieni nello slot 175-200 gli state che entrano nei calcoli di sinceUnix/clamp.
+- **Niente numeri stimati spacciati per veri**: la Graph API `/insights?metric_type=total_value` dà unique cross-day solo per finestre ≤ 30g. Sopra: chunking 28g + somma = doppi conteggi (lo stesso utente in chunk-1 e chunk-2 = 2). Stessa cosa `computeTotalsFromDaily` (Σ daily reach = account-giorni, non unique). Il dashboard ha politica unica: **totali sempre da `daily_snapshot` Turso**, etichetta `Reach (cumulato)` con tooltip onesto. Nessun preset Graph API. Nessun ranges precomputed in `data.json` (export-json.js, `RANGES = []`).
+- **Audience IG `follower_demographics`** esclude ~2-3% dei follower (privacy strict, sub-100 engaged, no city dichiarata). Su 488 follower vediamo 475 mappati su gender/age/country, 354 su city. **NON è un bug del nostro codice**: è un limite di Meta. Da segnalare in UI come "X di Y follower mappati", non da "fixare" sommando differenze.
+- **Account restart**: Pulp ha avuto pausa di 253g tra giugno 2025 e 6 marzo 2026. `detectRestart` in `src/analytics.js` lo identifica dai post (gap massimo > max(60g, 5×mediana)). Il dashboard clampa `sinceUnix` al restart se l'utente seleziona una finestra che inizia prima. Quando lavori sui dati storici, ricordati che pre-6-mar-2026 è "un'altra vita" dell'account.
+- **Coverage del DB**: `daily_snapshot` parte dal **23 aprile 2026** (data primo cron). Pre-23-apr nessun daily. `sinceUnix` clampa anche a `firstDailyUnix` se più tardo del restart. Quando il backfill manuale popola giorni indietro, il clamp si allarga automaticamente.
+- **Schemi `daily_snapshot.reach`**: ogni riga è il reach **unique 24h di quel giorno** (`fetchDayTotals` chiamato con `rangeSinceUntil(1)`). Sommare giorni indipendenti è onesto (no contaminazione cross-DB). Ma il risultato è "account-giorni cumulati", non "unique mensile".
+
 ## Quando tocca rimettere le mani
 
 - **Token scaduto/revocato** → ri-genera lo user token dal Graph API Explorer, scambialo long-lived, ricava il Page token da `/me/accounts`, aggiorna `TOKEN` in `src/config.js`.

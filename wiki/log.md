@@ -12,6 +12,23 @@ Tipi di kind:
 
 ---
 
+## [2026-05-13] feat | Backfill daily_snapshot pre-cron (6 mar → 22 apr)
+
+L'archivio `daily_snapshot` partiva dal 23 aprile 2026 (giorno del primo cron). Pre-23-apr era vuoto, e il dashboard mostrava finestra clampata al 23 apr anche se i POST coprivano fino al 6 marzo (restart). Nuovo script `npm run backfill-daily` per ricostruire la storia mancante.
+
+- IG `/insights?metric_type=total_value` accetta finestre passate anche oltre i 30g, purché ogni chiamata sia ≤ 30g. Loop di 1 giorno alla volta = unique 24h corretto, idempotente, niente chunking.
+- Lanciato in produzione: 48 giorni scritti dal 6 marzo al 22 aprile, 0 falliti. DB ora copre 69 giorni continui (6 mar → 13 mag).
+- `followers_count`, `follows_count`, `media_count` restano NULL nei giorni backfillati: IG espone solo il valore corrente. Lo `UPSERT` usa `COALESCE` su tutte le metriche per non sovrascrivere valori più ricchi delle run originali.
+- `audience_snapshot` non si backfilla: IG `follower_demographics` è always-current.
+
+Effetto: ora "tutto post-rinascita" via custom mostra reach 48.5K cumulato sui 68g (= sum daily reach), coerente con i 30g di 17.6K (perché finestre più lunghe sommano più giorni di overlap).
+
+## [2026-05-13] note | Audience: -2.7% di follower non mappati è limite Meta
+
+Discrepanza segnalata dall'utente: 488 follower live vs 475 in `audience_snapshot.gender` (F+M+U). Non è un bug — `follower_demographics` di IG esclude i follower con privacy strict / business sub-100 engaged / attributo non dichiarato. Su `city` ne mancano 134 (488−354 = 27% senza città dichiarata).
+
+UI aggiornata: header tab Audience mostra "X di Y follower mappati" con tooltip che spiega il limite di Meta. Nessun fix lato codice — la cifra è quello che Meta restituisce.
+
 ## [2026-05-13] fix | Totali sempre da daily_snapshot + clamp coverage DB
 
 Versione finale dopo round di iterazione con l'utente. Il vincolo è "i numeri devono tornare sempre e il custom deve poter andare indietro fino a dove abbiamo dati":

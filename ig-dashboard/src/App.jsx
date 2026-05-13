@@ -1914,6 +1914,20 @@ export default function App() {
                 <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] mono-font uppercase tracking-wider bg-[#D4A85C]/15 text-[#D4A85C]">
                   lifetime
                 </span>
+                {audience?.gender && account?.followers_count && (() => {
+                  const mapped = audience.gender.reduce((a, x) => a + (x.value || 0), 0);
+                  const total = account.followers_count;
+                  if (mapped === 0 || mapped === total) return null;
+                  return (
+                    <span className="text-[10px] mono-font text-white/40">
+                      {mapped} di {total} follower mappati
+                      <InfoTip
+                        text={`Meta espone i dati demografici solo per i follower con dati disponibili: account business senza privacy strict, audience non sotto soglia engagement, attributo dichiarato. Sui ${total} attuali ne abbiamo demografati ${mapped} (${((mapped/total)*100).toFixed(0)}%). I restanti ${total - mapped} non hanno breakdown disponibile — è un limite IG, non un buco nel nostro DB.`}
+                        side="bottom"
+                      />
+                    </span>
+                  );
+                })()}
               </div>
               <p className="text-xs text-white/50 mono-font mt-2 leading-relaxed max-w-2xl">
                 Questi dati riguardano l'intera storia dell'account, non il periodo selezionato sopra. Demografia dei follower attuali.

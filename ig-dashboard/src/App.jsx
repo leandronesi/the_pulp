@@ -1457,14 +1457,33 @@ export default function App() {
                   </div>
                 </div>
                 {/* 4 tile per tipo (Reels, Carousel, Foto, Video) — sempre tutti
-                    visibili anche con count=0, per segnalare assenze esplicite. */}
+                    visibili anche con count=0, per segnalare assenze esplicite.
+                    Sotto al count, una riga descrittiva di cosa IG misura per
+                    quel format — è la "grammatica" del pitch (no consigli,
+                    solo come funziona). */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {[
-                    { type: "REELS", icon: <Film size={18} className="text-white/60" /> },
-                    { type: "CAROUSEL_ALBUM", icon: <Layers size={18} className="text-white/60" /> },
-                    { type: "IMAGE", icon: <ImageIcon size={18} className="text-white/60" /> },
-                    { type: "VIDEO", icon: <Video size={18} className="text-white/60" /> },
-                  ].map(({ type, icon }) => {
+                    {
+                      type: "REELS",
+                      icon: <Film size={18} className="text-white/60" />,
+                      grammar: "qui contano watch e share",
+                    },
+                    {
+                      type: "CAROUSEL_ALBUM",
+                      icon: <Layers size={18} className="text-white/60" />,
+                      grammar: "qui contano i salvataggi",
+                    },
+                    {
+                      type: "IMAGE",
+                      icon: <ImageIcon size={18} className="text-white/60" />,
+                      grammar: "qui conta chi si ferma a guardare",
+                    },
+                    {
+                      type: "VIDEO",
+                      icon: <Video size={18} className="text-white/60" />,
+                      grammar: "formato in disuso su IG 2026",
+                    },
+                  ].map(({ type, icon, grammar }) => {
                     const m = contentMix.find((x) => x.type === type) || { type, count: 0, avgReach: 0, avgEr: 0 };
                     const empty = m.count === 0;
                     return (
@@ -1486,8 +1505,14 @@ export default function App() {
                         <div className="display-font text-4xl text-white font-light leading-none mb-1">
                           {m.count}
                         </div>
-                        <div className="text-[10px] mono-font text-white/40 uppercase tracking-wider mb-3">
+                        <div className="text-[10px] mono-font text-white/40 uppercase tracking-wider mb-2">
                           post
+                        </div>
+                        <div
+                          className="text-[10px] text-white/55 italic leading-snug mb-3"
+                          style={{ fontFamily: "Fraunces, serif" }}
+                        >
+                          {grammar}
                         </div>
                         {!empty && (
                           <div className="pt-3 border-t border-white/5 space-y-1.5 text-[10px] mono-font">

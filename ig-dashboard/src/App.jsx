@@ -35,7 +35,6 @@ import {
   CircleDot,
   Layers,
   Image as ImageIcon,
-  Video,
 } from "lucide-react";
 import { TOKEN, PAGE_ID, API } from "./config.js";
 import { generateFakeData, isFakeToken } from "./fakeData.js";
@@ -180,13 +179,13 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [warnings, setWarnings] = useState([]);
-  // Selezione periodo: preset (7/30/90) o custom (da/a date picker).
-  // In static mode i 3 preset leggono `data.ranges[N]` (precomputato dal workflow,
-  // valori IG-unique corretti); il custom calcola al volo dai daily_snapshot
-  // (somma per giorno, vedi computeTotalsFromDaily — caveat sui unique).
+  // Selezione periodo: preset numerico (7, 30), preset speciale "tot"
+  // (dall'inizio della memoria — restart o primo daily — fino a oggi) o
+  // custom (da/a date picker). Default: "tot", così il dashboard apre
+  // mostrando tutta la storia disponibile.
   const [selection, setSelection] = useState({
-    preset: 30,
-    customFrom: null, // Date o null
+    preset: "tot",
+    customFrom: null,
     customTo: null,
   });
   const [customOpen, setCustomOpen] = useState(false);
@@ -226,35 +225,48 @@ export default function App() {
 
   const { days, sinceUnix, untilUnix, sinceClamped, clampReason, requestedDays } = useMemo(() => {
     let sUnix, uUnix, requested;
+    const isTot = !isCustom && selection.preset === "tot";
     if (isCustom) {
       sUnix = Math.floor(selection.customFrom.getTime() / 1000);
       uUnix = Math.floor(selection.customTo.getTime() / 1000);
       requested = Math.max(1, Math.round((uUnix - sUnix) / 86400));
+    } else if (isTot) {
+      // "Tot": dall'inizio della memoria (restart o primo daily, il più
+      // tardo dei due) fino a oggi. Niente concetto di "richiesti": è
+      // tutto quello che abbiamo.
+      uUnix = Math.floor(Date.now() / 1000);
+      const candidates = [restartUnix, firstDailyUnix].filter(Boolean);
+      sUnix = candidates.length
+        ? Math.max(...candidates)
+        : uUnix - 30 * 86400;
+      requested = null;
     } else {
       uUnix = Math.floor(Date.now() / 1000);
       sUnix = uUnix - selection.preset * 86400;
       requested = selection.preset;
     }
-    // Due possibili clamp, prendiamo il più tardo (= la prima data per cui
-    // abbiamo dati reali). Reason ci serve per il banner di UI.
-    const restartHit = restartUnix && restartUnix > sUnix;
-    const dailyHit = firstDailyUnix && firstDailyUnix > sUnix;
+    // Clamp solo per preset numerici / custom. Per "tot" il clamp è già
+    // applicato a monte dal calcolo di sUnix, quindi non serve banner.
     let finalSince = sUnix;
     let reason = null;
-    if (restartHit && dailyHit) {
-      if (firstDailyUnix >= restartUnix) {
-        finalSince = firstDailyUnix;
-        reason = "daily";
-      } else {
+    if (!isTot) {
+      const restartHit = restartUnix && restartUnix > sUnix;
+      const dailyHit = firstDailyUnix && firstDailyUnix > sUnix;
+      if (restartHit && dailyHit) {
+        if (firstDailyUnix >= restartUnix) {
+          finalSince = firstDailyUnix;
+          reason = "daily";
+        } else {
+          finalSince = restartUnix;
+          reason = "restart";
+        }
+      } else if (restartHit) {
         finalSince = restartUnix;
         reason = "restart";
+      } else if (dailyHit) {
+        finalSince = firstDailyUnix;
+        reason = "daily";
       }
-    } else if (restartHit) {
-      finalSince = restartUnix;
-      reason = "restart";
-    } else if (dailyHit) {
-      finalSince = firstDailyUnix;
-      reason = "daily";
     }
     const effective = Math.max(1, Math.round((uUnix - finalSince) / 86400));
     return {
@@ -1053,7 +1065,17 @@ export default function App() {
           </div>
         </header>
 
-        {sinceClamped && (
+        {/* Banner periodo: in 'tot' mostro solo "account attivo dal X"
+            (l'utente sa che è tutta la memoria, niente altro); con preset
+            numerico o custom + clamp, mostro la finestra effettiva e il
+            motivo per cui è stata accorciata. */}
+        {selection.preset === "tot" && restart && (
+          <div className="mb-6 flex items-center gap-2 px-3 py-2 rounded-full bg-[#D4A85C]/10 border border-[#D4A85C]/20 text-[11px] mono-font text-[#D4A85C] w-fit">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#D4A85C]" />
+            account attivo dal {fmtDate(restart.restart_iso)}
+          </div>
+        )}
+        {selection.preset !== "tot" && sinceClamped && (
           <div className="mb-6 flex items-center gap-2 px-3 py-2 rounded-full bg-[#D4A85C]/10 border border-[#D4A85C]/20 text-[11px] mono-font text-[#D4A85C] w-fit">
             <span className="w-1.5 h-1.5 rounded-full bg-[#D4A85C]" />
             finestra effettiva: dal {fmtDate(new Date(sinceClamped * 1000))}
@@ -1064,7 +1086,7 @@ export default function App() {
                 "i daily snapshot in archivio partono da qui"}
               {clampReason === "restart" &&
                 restart &&
-                `l'account ha ripreso il ${fmtDate(restart.restart_iso)} dopo ${restart.pause_days}g di pausa`}
+                `account attivo dal ${fmtDate(restart.restart_iso)}`}
             </span>
           </div>
         )}
@@ -1132,45 +1154,58 @@ export default function App() {
 
               <Tabs.Content value="overview" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">
 
+            <TabQuestion text="sto crescendo?" />
+
             {/* Hero KPIs */}
             <section className="grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-4 mb-10 fadein">
-              <KpiCard
-                icon={<Users size={16} />}
-                label="Followers"
-                value={fmt(account.followers_count)}
-                sparkline={(() => {
-                  // Filtro per il dateRange attivo: la curva deve seguire il
-                  // filtro come il resto della dashboard. Le date in
-                  // followerTrend sono YYYY-MM-DD (Europe/Rome).
-                  const sinceMs = sinceUnix * 1000;
-                  const untilMs = untilUnix * 1000;
-                  const base = followerTrend
-                    .filter((d) => {
-                      const t = new Date(`${d.date}T00:00:00Z`).getTime();
-                      return t >= sinceMs && t <= untilMs;
-                    })
-                    .map((d) => ({
-                      reach: d.followers,
-                      date: fmtDate(d.date),
-                    }));
-                  const live = account.followers_count;
-                  // Appendi il valore live in coda se il periodo include oggi
-                  // e l'ultimo daily è diverso dal numero live (la curva
-                  // chiude sul valore mostrato nel KPI).
-                  const includesToday = untilMs >= Date.now() - 86400000;
-                  if (
-                    includesToday &&
-                    live != null &&
-                    base.length > 0 &&
-                    base[base.length - 1].reach !== live
-                  ) {
-                    return [...base, { reach: live, date: "ora" }];
-                  }
-                  return base;
-                })()}
-                accent="from-[#EDE5D0] to-[#D4A85C]"
-                info="Follower attuali. La piccola curva sotto mostra come il numero cambia giorno per giorno (serve ≥2 giorni di dati per apparire). La Graph API non dà lo storico: ce lo costruiamo noi."
-              />
+              {(() => {
+                // Calcolo follower-trend filtrato + delta nel periodo.
+                // Il delta è (valore live attuale − primo daily nel range);
+                // se manca il primo daily, niente delta (non l'inventiamo).
+                const sinceMs = sinceUnix * 1000;
+                const untilMs = untilUnix * 1000;
+                const inRange = followerTrend.filter((d) => {
+                  const t = new Date(`${d.date}T00:00:00Z`).getTime();
+                  return t >= sinceMs && t <= untilMs;
+                });
+                const live = account.followers_count;
+                const base = inRange.map((d) => ({
+                  reach: d.followers,
+                  date: fmtDate(d.date),
+                }));
+                const includesToday = untilMs >= Date.now() - 86400000;
+                const spark =
+                  includesToday &&
+                  live != null &&
+                  base.length > 0 &&
+                  base[base.length - 1].reach !== live
+                    ? [...base, { reach: live, date: "ora" }]
+                    : base;
+
+                const firstFollowers = inRange[0]?.followers;
+                const delta =
+                  live != null && firstFollowers != null
+                    ? live - firstFollowers
+                    : null;
+                const sub =
+                  delta != null
+                    ? `${delta >= 0 ? "+" : ""}${delta} ${
+                        Math.abs(delta) === 1 ? "follower" : "follower"
+                      } negli ultimi ${days}g`
+                    : null;
+
+                return (
+                  <KpiCard
+                    icon={<Users size={16} />}
+                    label="Followers"
+                    value={fmt(live)}
+                    subtitle={sub}
+                    sparkline={spark}
+                    accent="from-[#EDE5D0] to-[#D4A85C]"
+                    info="Follower attuali. Sotto il numero, il delta nel periodo selezionato (calcolato dal primo daily disponibile a oggi). La curva mostra il giorno-per-giorno; la Graph API non dà lo storico, ce lo costruiamo noi."
+                  />
+                );
+              })()}
               <KpiCard
                 icon={<Film size={16} />}
                 label={`Reels · ${dateRange}g`}
@@ -1411,6 +1446,8 @@ export default function App() {
 
               <Tabs.Content value="posts" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">
 
+            <TabQuestion text="cosa funziona?" />
+
             {/* Posts scope banner */}
             <div className="mb-6 flex items-baseline gap-3 flex-wrap">
               <h2 className="display-font text-3xl text-white font-light">
@@ -1456,12 +1493,12 @@ export default function App() {
                     </p>
                   </div>
                 </div>
-                {/* 4 tile per tipo (Reels, Carousel, Foto, Video) — sempre tutti
+                {/* 3 tile per tipo (Reels, Carousel, Foto) — sempre tutti
                     visibili anche con count=0, per segnalare assenze esplicite.
                     Sotto al count, una riga descrittiva di cosa IG misura per
                     quel format — è la "grammatica" del pitch (no consigli,
-                    solo come funziona). */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    solo come funziona). Video feed escluso: deprecato su IG. */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {[
                     {
                       type: "REELS",
@@ -1477,11 +1514,6 @@ export default function App() {
                       type: "IMAGE",
                       icon: <ImageIcon size={18} className="text-white/60" />,
                       grammar: "qui conta chi si ferma a guardare",
-                    },
-                    {
-                      type: "VIDEO",
-                      icon: <Video size={18} className="text-white/60" />,
-                      grammar: "formato in disuso su IG 2026",
                     },
                   ].map(({ type, icon, grammar }) => {
                     const m = contentMix.find((x) => x.type === type) || { type, count: 0, avgReach: 0, avgEr: 0 };
@@ -1921,6 +1953,7 @@ export default function App() {
               </Tabs.Content>
 
               <Tabs.Content value="stories" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">
+                <TabQuestion text="sto parlando con i miei?" />
                 <StoriesTab
                   stories={stories}
                   storyHistory={storyHistory}
@@ -1929,6 +1962,8 @@ export default function App() {
               </Tabs.Content>
 
               <Tabs.Content value="audience" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">
+
+            <TabQuestion text="chi mi sta dietro?" />
 
             {/* Audience — lifetime disclaimer + panels */}
             <div className="mb-6 fadein">
@@ -1972,6 +2007,7 @@ export default function App() {
                       U: "#EDE5D0",
                     }}
                     labelMap={{ F: "Donne", M: "Uomini", U: "Non spec." }}
+                    followersTotal={account?.followers_count}
                   />
                 )}
                 {audience.age && (
@@ -1980,16 +2016,23 @@ export default function App() {
                     title="Età"
                     data={audience.age}
                     colors={null}
+                    followersTotal={account?.followers_count}
                   />
                 )}
-                {(audience.city || audience.country) && (
-                  <AudiencePanel
-                    icon={<Globe2 size={16} />}
-                    title={audience.city ? "Top città" : "Top paesi"}
-                    data={(audience.city || audience.country).slice(0, 6)}
-                    colors={null}
-                  />
-                )}
+                {(audience.city || audience.country) && (() => {
+                  const full = audience.city || audience.country;
+                  const mappedTotal = full.reduce((s, r) => s + (r.value || 0), 0);
+                  return (
+                    <AudiencePanel
+                      icon={<Globe2 size={16} />}
+                      title={audience.city ? "Top città" : "Top paesi"}
+                      data={full.slice(0, 6)}
+                      colors={null}
+                      followersTotal={account?.followers_count}
+                      mappedTotal={mappedTotal}
+                    />
+                  );
+                })()}
               </div>
             ) : (
               <div className="glass rounded-3xl p-8 sm:p-12 text-center mb-10">
@@ -2039,6 +2082,20 @@ export default function App() {
 // La maggior parte dei sub-componenti vive in src/components/ (estratti per
 // ridurre la dimensione di App.jsx). Qui resta solo TabTrigger perche' e'
 // strettamente legato alla struttura Tabs.List qui sopra.
+
+// TabQuestion — sottotitolo in italico Fraunces sopra il contenuto di ogni
+// tab. Riprende le 4 domande del pitch (slide 4): lega ogni sezione alla
+// domanda che risponde, così the Pulp capisce subito perché esiste la tab.
+function TabQuestion({ text }) {
+  return (
+    <p
+      className="text-sm italic text-[#EDE5D0]/65 mb-6 -mt-2"
+      style={{ fontFamily: "Fraunces, serif" }}
+    >
+      {text}
+    </p>
+  );
+}
 
 // TabTrigger — trigger stilato per Radix Tabs. Underline cream sulla tab
 // attiva (data-state=active), hover discreto sulle inattive.

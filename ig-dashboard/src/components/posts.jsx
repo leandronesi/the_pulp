@@ -226,10 +226,10 @@ export function PostCard({ post, rank }) {
           <div className="mt-3 pt-3 border-t border-white/5">
             <div className="flex items-center justify-between gap-3 mb-2">
               <div className="text-[9px] text-white/30 mono-font uppercase tracking-wider">
-                timeline 7g
+                primi 7 giorni
               </div>
-              <div className="text-[9px] text-white/40 mono-font uppercase tracking-wider">
-                {post.observedDays}/7g osservati
+              <div className="text-[10px] text-white/45 italic" style={{ fontFamily: "Fraunces, serif" }}>
+                osservato per {post.observedDays} {post.observedDays === 1 ? "giorno" : "giorni"}
               </div>
             </div>
             <LifecycleMiniChart data={post.lifecycleSeries} />
@@ -256,14 +256,32 @@ export function Metric({ icon, value, label }) {
 }
 
 // ─── AudiencePanel ────────────────────────────────────────────────────────────
-export function AudiencePanel({ icon, title, data, colors, labelMap }) {
+// `followersTotal` opzionale: se passato, mostra "mappati X / Y" nell'header
+// — onestà sul fatto che IG follower_demographics non copre tutti i follower
+// (privacy strict, sub-100 engaged, attributo non dichiarato; soprattutto su
+// city ne mancano molti).
+// `mappedTotal` opzionale: usato quando `data` è già una slice (es. top-N
+// città) e vogliamo mostrare il vero totale del breakdown, non la somma
+// dei soli visibili.
+export function AudiencePanel({ icon, title, data, colors, labelMap, followersTotal, mappedTotal }) {
   const sorted = [...data].sort((a, b) => b.value - a.value);
-  const total = sorted.reduce((s, r) => s + r.value, 0) || 1;
+  const sumVisible = sorted.reduce((s, r) => s + r.value, 0);
+  const mapped = mappedTotal ?? sumVisible;
+  const total = sumVisible || 1;
+  const showRatio =
+    followersTotal && mapped > 0 && mapped !== followersTotal;
   return (
     <div className="glass rounded-2xl p-4 sm:p-5">
-      <div className="flex items-center gap-2 text-white/60 text-xs mono-font mb-4 uppercase tracking-wider">
-        {icon}
-        <span>{title}</span>
+      <div className="flex items-baseline justify-between gap-2 mb-4">
+        <div className="flex items-center gap-2 text-white/60 text-xs mono-font uppercase tracking-wider">
+          {icon}
+          <span>{title}</span>
+        </div>
+        {showRatio && (
+          <span className="text-[10px] mono-font text-white/35">
+            {mapped} / {followersTotal}
+          </span>
+        )}
       </div>
       <div className="space-y-3">
         {sorted.map((row) => {

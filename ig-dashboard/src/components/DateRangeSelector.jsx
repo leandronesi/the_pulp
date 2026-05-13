@@ -61,9 +61,20 @@ export function DateRangeSelector({
 
   return (
     <div className="glass rounded-3xl sm:rounded-full px-2 py-1 flex flex-wrap sm:flex-nowrap items-center gap-1 w-full sm:w-auto">
-      {/* Solo 7d e 30d: Meta espone unique veri (total_value) fino a 30g.
-          Sopra è chunking + somma → doppi conteggi, numero gonfiato.
-          Per finestre più lunghe → custom, con disclaimer onesto sui totali. */}
+      {/* "tot" = tutta la memoria disponibile (dal restart o primo daily
+          a oggi). È il default. Poi 7d e 30d come preset numerici, poi
+          custom. Niente 90d preset (era chunking-gonfio prima del
+          refactor "solo daily_snapshot"). */}
+      <button
+        onClick={() => onPreset("tot")}
+        className={`px-3 py-1.5 text-xs rounded-full transition mono-font whitespace-nowrap ${
+          !isCustom && selection.preset === "tot"
+            ? "bg-[#EDE5D0] text-[#0B3A30] font-semibold"
+            : "text-white/60 hover:text-white"
+        }`}
+      >
+        tot
+      </button>
       {[7, 30].map((d) => {
         const active = !isCustom && selection.preset === d;
         return (

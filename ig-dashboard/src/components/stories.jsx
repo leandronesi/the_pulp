@@ -8,7 +8,7 @@ import {
   Tooltip,
   CartesianGrid,
 } from "recharts";
-import { CircleDot, TrendingUp, AlertCircle, Sparkles } from "lucide-react";
+import { CircleDot, TrendingUp, Sparkles, Heart } from "lucide-react";
 import { fmt } from "../utils/format.js";
 import { DeltaPill } from "./kpi-cards.jsx";
 import { InfoTip } from "./tooltips.jsx";
@@ -109,17 +109,24 @@ export function StoriesTab({ stories, storyHistory, followersCount }) {
     [inWindow, storyHistory]
   );
 
-  // Tre highlight, ciascuno risponde a una domanda diversa della tab
+  // Tre highlight POSITIVI, ciascuno risponde a una sfumatura della tab
   // "Sto parlando con i miei?":
   //   - topReachStory: la più vista (reach)
   //   - topDialogueStory: quella che ha generato più dialogo (DM + share)
-  //   - bottomStory: la meno vista (reach)
-  // Niente verdetti narrativi nelle card — solo descrizione dei numeri.
-  // Sono LORO di the Pulp a leggere i pattern (vedi docs/dashboard-pitch.html).
-  const { topReachStory, topDialogueStory, bottomStory } = useMemo(() => {
+  //   - topReactionsStory: quella con più reazioni rapide (sticker, ❤, etc.)
+  // Niente "meno vista": parliamo di numerellini, etichette negative non
+  // aggiungono. Solo positivi.
+  const { topReachStory, topDialogueStory, topReactionsStory } = useMemo(() => {
     if (enrichedStories.length < 2) {
-      return { topReachStory: null, topDialogueStory: null, bottomStory: null };
+      return {
+        topReachStory: null,
+        topDialogueStory: null,
+        topReactionsStory: null,
+      };
     }
+    const reactionsOf = (s) =>
+      Math.max(0, (s.total_interactions || 0) - (s.replies || 0) - (s.shares || 0));
+
     const byReach = [...enrichedStories].sort(
       (a, b) => (b.reach || 0) - (a.reach || 0)
     );
@@ -128,17 +135,27 @@ export function StoriesTab({ stories, storyHistory, followersCount }) {
       const dB = (b.replies || 0) + (b.shares || 0);
       return dB - dA;
     });
+    const byReactions = [...enrichedStories].sort(
+      (a, b) => reactionsOf(b) - reactionsOf(a)
+    );
+
     const topReach = byReach[0];
     const topDialogue = byDialogue[0];
-    // Mostra topDialogue solo se ha almeno 1 DM o share, ed è una story
-    // diversa da topReach (altrimenti è ridondante)
-    const hasDialogue =
-      (topDialogue?.replies || 0) + (topDialogue?.shares || 0) > 0;
+    const topReactions = byReactions[0];
+
+    const dialogueScore =
+      (topDialogue?.replies || 0) + (topDialogue?.shares || 0);
+    const reactionsScore = reactionsOf(topReactions);
+    const used = new Set([topReach.id]);
+
+    const dialogueOK = dialogueScore > 0 && !used.has(topDialogue.id);
+    if (dialogueOK) used.add(topDialogue.id);
+    const reactionsOK = reactionsScore > 0 && !used.has(topReactions.id);
+
     return {
       topReachStory: topReach,
-      topDialogueStory:
-        hasDialogue && topDialogue.id !== topReach.id ? topDialogue : null,
-      bottomStory: byReach[byReach.length - 1],
+      topDialogueStory: dialogueOK ? topDialogue : null,
+      topReactionsStory: reactionsOK ? topReactions : null,
     };
   }, [enrichedStories]);
 
@@ -314,35 +331,26 @@ export function StoriesTab({ stories, storyHistory, followersCount }) {
         </section>
       )}
 
-      {(topReachStory || topDialogueStory || bottomStory) && (
-        <section
-          className={`grid grid-cols-1 ${
-            topDialogueStory ? "md:grid-cols-3" : "md:grid-cols-2"
-          } gap-4 mb-8 fadein`}
-        >
-          {topReachStory && (
-            <HighlightCard
-              kind="top-reach"
-              story={topReachStory}
-              avgReach={aggregates?.reachAvg || 0}
-            />
-          )}
-          {topDialogueStory && (
-            <HighlightCard
-              kind="top-dialogue"
-              story={topDialogueStory}
-              avgReach={aggregates?.reachAvg || 0}
-            />
-          )}
-          {bottomStory && bottomStory.id !== topReachStory?.id && (
-            <HighlightCard
-              kind="bottom"
-              story={bottomStory}
-              avgReach={aggregates?.reachAvg || 0}
-            />
-          )}
-        </section>
-      )}
+      {(topReachStory || topDialogueStory || topReactionsStory) && (() => {
+        const cards = [
+          topReachStory && { kind: "top-reach", story: topReachStory },
+          topDialogueStory && { kind: "top-dialogue", story: topDialogueStory },
+          topReactionsStory && { kind: "top-reactions", story: topReactionsStory },
+        ].filter(Boolean);
+        const cols = cards.length >= 3 ? "md:grid-cols-3" : cards.length === 2 ? "md:grid-cols-2" : "";
+        return (
+          <section className={`grid grid-cols-1 ${cols} gap-4 mb-8 fadein`}>
+            {cards.map(({ kind, story }) => (
+              <HighlightCard
+                key={kind}
+                kind={kind}
+                story={story}
+                avgReach={aggregates?.reachAvg || 0}
+              />
+            ))}
+          </section>
+        );
+      })()}
 
       <section className="space-y-3 fadein">
         {enrichedStories.map((s) => (
@@ -461,9 +469,9 @@ function buildInsights({ aggregates, prevAggregates, enrichedStories, windowDays
 // ─── Highlight card (top/bottom story) ───────────────────────────────────
 
 function HighlightCard({ kind, story, avgReach }) {
-  // Tre varianti, tutte descrittive (cosa è successo, non perché).
-  // Niente verdetti: il pitch dice "non vi dice cosa fare, vi mostra cosa
-  // è successo". Letture e pattern stanno all'occhio di chi guarda.
+  // Tre varianti positive, tutte descrittive (cosa è successo, non perché).
+  // Niente "MENO VISTA" o bottom: parliamo di numerellini, etichette
+  // negative non aggiungono.
   const variant = {
     "top-reach": {
       accent: "#7FB3A3",
@@ -475,10 +483,10 @@ function HighlightCard({ kind, story, avgReach }) {
       label: "PIÙ COMMENTATA",
       icon: <Sparkles size={14} />,
     },
-    bottom: {
-      accent: "#D98B6F",
-      label: "MENO VISTA",
-      icon: <AlertCircle size={14} />,
+    "top-reactions": {
+      accent: "#EDE5D0",
+      label: "PIÙ REAZIONI",
+      icon: <Heart size={14} />,
     },
   }[kind] || { accent: "#7FB3A3", label: kind, icon: null };
 
@@ -486,7 +494,12 @@ function HighlightCard({ kind, story, avgReach }) {
   const ratio = avgReach > 0 ? reach / avgReach : 1;
   const replies = story.replies || 0;
   const shares = story.shares || 0;
-  const reactions = Math.max(0, (story.total_interactions || 0) - replies);
+  // Reazioni "pure": tutto quello che è interazione meno DM e share (sticker
+  // tap, ❤️, swipe interattivi). È il segnale "leggero" di affinità.
+  const reactions = Math.max(
+    0,
+    (story.total_interactions || 0) - replies - shares
+  );
 
   // Riga 1: la metrica primaria della variante.
   // Riga 2: gli altri segnali, separati da · — comparono solo se >0.
@@ -497,6 +510,13 @@ function HighlightCard({ kind, story, avgReach }) {
     if (replies > 0) parts.push(`${replies} DM`);
     if (shares > 0) parts.push(`${shares} condivisioni`);
     parts.push(`${reach} account unici`);
+    secondary = parts.join(" · ");
+  } else if (kind === "top-reactions") {
+    primary = `${reactions} reazioni`;
+    const parts = [`${reach} account unici`];
+    if (avgReach > 0) parts.push(`${ratio.toFixed(1)}× la media`);
+    if (replies > 0) parts.push(`${replies} DM`);
+    if (shares > 0) parts.push(`${shares} condivisioni`);
     secondary = parts.join(" · ");
   } else {
     primary = `${reach} account unici`;
@@ -647,7 +667,9 @@ export function StoryRow({ story, history, avgReach }) {
   const spark = (history || []).filter((h) => h.reach > 0);
 
   // Tier per-story: confronto del reach contro la media del periodo.
-  // Niente tier se la media è 0 o se la story è la sola del periodo.
+  // Mostriamo solo "sopra media" o "in media" — niente "sotto media"
+  // (parliamo di numerellini, etichetta negativa non aggiunge). Niente
+  // tier se la media è 0 o la story è la sola del periodo.
   const reachRatio = avgReach > 0 ? story.reach / avgReach : 1;
   const perStoryTier =
     avgReach > 0 && story.reach > 0
@@ -655,7 +677,7 @@ export function StoryRow({ story, history, avgReach }) {
         ? { label: "sopra media", color: "#7FB3A3" }
         : reachRatio >= 0.8
         ? { label: "in media", color: "#D4A85C" }
-        : { label: "sotto media", color: "#D98B6F" }
+        : null
       : null;
 
   const dropOffLabel = story.dropOffHours
@@ -701,7 +723,7 @@ export function StoryRow({ story, history, avgReach }) {
             >
               {perStoryTier.label}
               <InfoTip
-                text={`Confronto del reach di questa story (${story.reach}) con la media del periodo (${Math.round(avgReach)}). Ratio ${reachRatio.toFixed(2)}×: ≥1.3 = sopra media, 0.8-1.3 = in media, <0.8 = sotto media. Serve a leggere la singola story senza dover ricordare la media a memoria.`}
+                text={`Reach di questa story (${story.reach}) rispetto alla media del periodo (${Math.round(avgReach)}). Ratio ${reachRatio.toFixed(2)}×: ≥1.3 = sopra media, 0.8-1.3 = in media. Sotto la media non viene etichettata.`}
                 side="top"
               />
             </span>

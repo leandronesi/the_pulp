@@ -31,5 +31,6 @@ ig-dashboard/public/data.json
 # contengono dati IG reali e citazioni di caption — fuori dal repo)
 reports/
 
-# Materiale interno non destinato al repo pubblico
-docs/dashboard-intro.html
+# Materiale interno (pitch, intro deck, drafts): mai committare. Contiene
+# numeri reali, snapshot interni, frasi destinate a una specifica audience.
+docs/

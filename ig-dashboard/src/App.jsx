@@ -1209,7 +1209,7 @@ export default function App() {
                     ? delta(reelTotalPlays, postMetricsAggPrev.reelViewsTotal)
                     : null
                 }
-                info={`Somma delle visualizzazioni dei reel pubblicati negli ultimi ${dateRange} giorni (latest snapshot). Coerente con la card "Tempo reel" qui a fianco: tempo / views = watch medio mostrato nel pill. Su micro-account cresce a colpi: un reel virale può raddoppiare il totale del periodo.`}
+                info={`Quante volte i reel del periodo sono stati visti. Una "view" è un avvio di playback (non un account unico). Coerente con la card "Tempo reel" qui a fianco: tempo / views = il watch medio mostrato nel pill. Su micro-account cresce a colpi — un reel virale può raddoppiare il totale del periodo.`}
               />
               <RateCard
                 icon={<Clock size={14} />}
@@ -1223,7 +1223,7 @@ export default function App() {
                 }
                 legend={reelAvgWatchSec != null ? WATCH_TIME_TIERS_LEGEND : null}
                 legendCurrent={watchTimeTier(reelAvgWatchSec)?.label}
-                info={`Tempo TOTALE di visualizzazione accumulato dai reel pubblicati negli ultimi ${dateRange} giorni (${reelPublishedCount} reel). Il pill mostra il watch medio per visualizzazione = tempo / views, coerente con i due tile a fianco: <4s = il gancio non funziona, 4-8s = avg, 8-15s = good, >15s = il reel viene davvero guardato. Possibile undercount sui reel più vecchi del nostro storico (la metrica nel DB è popolata da fine aprile 2026).`}
+                info={`Watch time: nei reel, quanto vi guardano davvero prima di passare oltre. Qui è il tempo totale accumulato dai ${reelPublishedCount} reel del periodo. Il pill mostra il watch medio per visualizzazione (tempo / views): <4s = il gancio iniziale non aggancia, 4-8s = avg, 8-15s = good, >15s = il reel viene davvero guardato. Possibile undercount sui reel più vecchi (la metrica nel DB è popolata da fine aprile 2026).`}
               />
               <RateCard
                 icon={<TrendingUp size={14} />}
@@ -1238,8 +1238,8 @@ export default function App() {
                 }
                 info={
                   insights?.fromDailySum
-                    ? `Somma del reach giornaliero dei ${dateRange} giorni in finestra (dato cumulato dal nostro archivio Turso). Ogni giorno conta i suoi unique 24h: chi ti vede sia lunedì che martedì viene contato due volte. Non è "account UNICI cross-periodo" — quel numero IG lo espone solo a 30g via Graph API. Su finestre brevi (< 7g) i due numeri sono molto simili; su finestre lunghe il cumulato è più alto, di un fattore = numero medio di giorni in cui un utente ti rivede.`
-                    : `Account UNICI che hanno visto almeno un contenuto negli ultimi ${dateRange} giorni. Un utente che vede 10 post conta 1 (dedupe automatico Meta).`
+                    ? `Reach: gli occhi che vi hanno visto, non i like. Qui è la somma del reach giornaliero dei ${dateRange} giorni in finestra: ogni giorno conta gli account unici delle sue 24 ore, sommati. Chi vi vede sia lunedì che martedì viene contato due volte — è un "occhi cumulati", non "persone uniche del mese". Su finestre brevi (≤ 7g) la differenza è piccola; su finestre lunghe il numero cresce in proporzione a quante volte mediamente un follower vi rivede.`
+                    : `Reach: gli occhi che vi hanno visto, non i like. Qui sono gli account unici degli ultimi ${dateRange} giorni: chi vede 10 vostri post conta 1 (dedupe automatico Meta).`
                 }
               />
               <RateCard
@@ -1254,14 +1254,14 @@ export default function App() {
                 tier={erTier(postMetricsAgg?.engagementRate)}
                 legend={ER_TIERS_LEGEND}
                 legendCurrent={erTier(postMetricsAgg?.engagementRate)?.label}
-                info="Engagement rate del periodo, calcolato sui contenuti pubblicati: somma di (like + commenti + salvati + condivisioni) di tutti i post ÷ somma reach dei post × 100. Più stabile della media-delle-medie: un post con reach piccolissimo non gonfia il numero. Diverso dall'ER account-level (basato sui daily_snapshot) — questo riflette esattamente quanto i contenuti del periodo hanno attivato chi li ha visti."
+                info="Engagement: di chi vi ha visto, quanti hanno reagito — il termometro. Qui è la somma di (like + commenti + salvati + condivisioni) di tutti i post del periodo, diviso la somma del reach dei post, ×100. Più stabile della media-delle-medie: un post con poco reach non gonfia il numero. Riflette quanto i contenuti del periodo hanno attivato chi li ha visti."
               />
               <RateCard
                 icon={<Share2 size={14} />}
                 label="Share rate"
                 value={fmtPct(postMetricsAgg?.shareRate)}
                 tier={shareRateTier(postMetricsAgg?.shareRate)}
-                info="Shares ÷ Reach × 100. 'Vale la pena mandarlo a qualcuno'. >1.5% excellent · 0.5–1.5% good · <0.5% avg."
+                info="Share: chi vi ha passato a qualcun altro — il segnale più forte. Qui è shares ÷ reach × 100. Significa 'vale la pena mandarlo a qualcuno'. Soglie indicative: >1.5% forte, 0.5–1.5% normale, <0.5% basso."
               />
             </section>
 
@@ -1457,14 +1457,33 @@ export default function App() {
                   </div>
                 </div>
                 {/* 4 tile per tipo (Reels, Carousel, Foto, Video) — sempre tutti
-                    visibili anche con count=0, per segnalare assenze esplicite. */}
+                    visibili anche con count=0, per segnalare assenze esplicite.
+                    Sotto al count, una riga descrittiva di cosa IG misura per
+                    quel format — è la "grammatica" del pitch (no consigli,
+                    solo come funziona). */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {[
-                    { type: "REELS", icon: <Film size={18} className="text-white/60" /> },
-                    { type: "CAROUSEL_ALBUM", icon: <Layers size={18} className="text-white/60" /> },
-                    { type: "IMAGE", icon: <ImageIcon size={18} className="text-white/60" /> },
-                    { type: "VIDEO", icon: <Video size={18} className="text-white/60" /> },
-                  ].map(({ type, icon }) => {
+                    {
+                      type: "REELS",
+                      icon: <Film size={18} className="text-white/60" />,
+                      grammar: "qui contano watch e share",
+                    },
+                    {
+                      type: "CAROUSEL_ALBUM",
+                      icon: <Layers size={18} className="text-white/60" />,
+                      grammar: "qui contano i salvataggi",
+                    },
+                    {
+                      type: "IMAGE",
+                      icon: <ImageIcon size={18} className="text-white/60" />,
+                      grammar: "qui conta chi si ferma a guardare",
+                    },
+                    {
+                      type: "VIDEO",
+                      icon: <Video size={18} className="text-white/60" />,
+                      grammar: "formato in disuso su IG 2026",
+                    },
+                  ].map(({ type, icon, grammar }) => {
                     const m = contentMix.find((x) => x.type === type) || { type, count: 0, avgReach: 0, avgEr: 0 };
                     const empty = m.count === 0;
                     return (
@@ -1486,8 +1505,14 @@ export default function App() {
                         <div className="display-font text-4xl text-white font-light leading-none mb-1">
                           {m.count}
                         </div>
-                        <div className="text-[10px] mono-font text-white/40 uppercase tracking-wider mb-3">
+                        <div className="text-[10px] mono-font text-white/40 uppercase tracking-wider mb-2">
                           post
+                        </div>
+                        <div
+                          className="text-[10px] text-white/55 italic leading-snug mb-3"
+                          style={{ fontFamily: "Fraunces, serif" }}
+                        >
+                          {grammar}
                         </div>
                         {!empty && (
                           <div className="pt-3 border-t border-white/5 space-y-1.5 text-[10px] mono-font">

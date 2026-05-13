@@ -109,16 +109,36 @@ export function StoriesTab({ stories, storyHistory, followersCount }) {
     [inWindow, storyHistory]
   );
 
-  // Top/bottom: per reach (la metrica più sensata da rankare a livello story).
-  // Se ci sono <2 stories, niente highlight (banale).
-  const { topStory, bottomStory } = useMemo(() => {
-    if (enrichedStories.length < 2) return { topStory: null, bottomStory: null };
-    const sorted = [...enrichedStories].sort(
+  // Tre highlight, ciascuno risponde a una domanda diversa della tab
+  // "Sto parlando con i miei?":
+  //   - topReachStory: la più vista (reach)
+  //   - topDialogueStory: quella che ha generato più dialogo (DM + share)
+  //   - bottomStory: la meno vista (reach)
+  // Niente verdetti narrativi nelle card — solo descrizione dei numeri.
+  // Sono LORO di the Pulp a leggere i pattern (vedi docs/dashboard-pitch.html).
+  const { topReachStory, topDialogueStory, bottomStory } = useMemo(() => {
+    if (enrichedStories.length < 2) {
+      return { topReachStory: null, topDialogueStory: null, bottomStory: null };
+    }
+    const byReach = [...enrichedStories].sort(
       (a, b) => (b.reach || 0) - (a.reach || 0)
     );
+    const byDialogue = [...enrichedStories].sort((a, b) => {
+      const dA = (a.replies || 0) + (a.shares || 0);
+      const dB = (b.replies || 0) + (b.shares || 0);
+      return dB - dA;
+    });
+    const topReach = byReach[0];
+    const topDialogue = byDialogue[0];
+    // Mostra topDialogue solo se ha almeno 1 DM o share, ed è una story
+    // diversa da topReach (altrimenti è ridondante)
+    const hasDialogue =
+      (topDialogue?.replies || 0) + (topDialogue?.shares || 0) > 0;
     return {
-      topStory: sorted[0],
-      bottomStory: sorted[sorted.length - 1],
+      topReachStory: topReach,
+      topDialogueStory:
+        hasDialogue && topDialogue.id !== topReach.id ? topDialogue : null,
+      bottomStory: byReach[byReach.length - 1],
     };
   }, [enrichedStories]);
 
@@ -294,16 +314,27 @@ export function StoriesTab({ stories, storyHistory, followersCount }) {
         </section>
       )}
 
-      {(topStory || bottomStory) && (
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 fadein">
-          {topStory && (
+      {(topReachStory || topDialogueStory || bottomStory) && (
+        <section
+          className={`grid grid-cols-1 ${
+            topDialogueStory ? "md:grid-cols-3" : "md:grid-cols-2"
+          } gap-4 mb-8 fadein`}
+        >
+          {topReachStory && (
             <HighlightCard
-              kind="top"
-              story={topStory}
+              kind="top-reach"
+              story={topReachStory}
               avgReach={aggregates?.reachAvg || 0}
             />
           )}
-          {bottomStory && bottomStory.id !== topStory?.id && (
+          {topDialogueStory && (
+            <HighlightCard
+              kind="top-dialogue"
+              story={topDialogueStory}
+              avgReach={aggregates?.reachAvg || 0}
+            />
+          )}
+          {bottomStory && bottomStory.id !== topReachStory?.id && (
             <HighlightCard
               kind="bottom"
               story={bottomStory}
@@ -430,43 +461,51 @@ function buildInsights({ aggregates, prevAggregates, enrichedStories, windowDays
 // ─── Highlight card (top/bottom story) ───────────────────────────────────
 
 function HighlightCard({ kind, story, avgReach }) {
-  const isTop = kind === "top";
-  const accent = isTop ? "#7FB3A3" : "#D98B6F";
-  const label = isTop ? "QUELLA CHE HA ATTECCHITO" : "QUELLA CHE È RIMASTA INDIETRO";
-  const icon = isTop ? <TrendingUp size={14} /> : <AlertCircle size={14} />;
+  // Tre varianti, tutte descrittive (cosa è successo, non perché).
+  // Niente verdetti: il pitch dice "non vi dice cosa fare, vi mostra cosa
+  // è successo". Letture e pattern stanno all'occhio di chi guarda.
+  const variant = {
+    "top-reach": {
+      accent: "#7FB3A3",
+      label: "PIÙ VISTA",
+      icon: <TrendingUp size={14} />,
+    },
+    "top-dialogue": {
+      accent: "#D4A85C",
+      label: "PIÙ COMMENTATA",
+      icon: <Sparkles size={14} />,
+    },
+    bottom: {
+      accent: "#D98B6F",
+      label: "MENO VISTA",
+      icon: <AlertCircle size={14} />,
+    },
+  }[kind] || { accent: "#7FB3A3", label: kind, icon: null };
+
   const reach = story.reach || 0;
   const ratio = avgReach > 0 ? reach / avgReach : 1;
   const replies = story.replies || 0;
   const shares = story.shares || 0;
   const reactions = Math.max(0, (story.total_interactions || 0) - replies);
 
-  // Verdetto: cosa rende questa story il top/bottom?
-  let verdict;
-  if (isTop) {
-    if (replies >= 3) {
-      verdict = `${replies} ${replies === 1 ? "DM" : "DM"} ricevuti: gente che ti scrive in chat, segnale alto di affinità.`;
-    } else if (shares >= 2) {
-      verdict = `${shares} condivisioni in DM: l'hanno passata ad altri, contenuto da "guarda questo".`;
-    } else if (ratio >= 2) {
-      verdict = `Reach ${ratio.toFixed(1)}× la media: l'algoritmo l'ha spinta più del solito.`;
-    } else if (reactions >= 5) {
-      verdict = `${reactions} reactions/sticker: ha attivato la reazione veloce, anche senza DM.`;
-    } else {
-      verdict = `${reach} account unici, sopra la media del periodo (${Math.round(avgReach)}).`;
-    }
+  // Riga 1: la metrica primaria della variante.
+  // Riga 2: gli altri segnali, separati da · — comparono solo se >0.
+  let primary, secondary;
+  if (kind === "top-dialogue") {
+    primary = `${replies + shares} segnali di dialogo`;
+    const parts = [];
+    if (replies > 0) parts.push(`${replies} DM`);
+    if (shares > 0) parts.push(`${shares} condivisioni`);
+    parts.push(`${reach} account unici`);
+    secondary = parts.join(" · ");
   } else {
-    const diff = Math.round(avgReach - reach);
-    if (reach === 0) {
-      verdict = "Nessun account raggiunto: probabilmente fascia oraria morta o intermittenza algoritmica.";
-    } else if (diff > 0) {
-      verdict = `${reach} account unici, ${diff} sotto la media. ${
-        replies === 0 && reactions === 0
-          ? "Niente interazioni: format poco coinvolgente o slot debole."
-          : "Reach basso ma qualche interazione: ha agganciato chi l'ha vista."
-      }`;
-    } else {
-      verdict = `${reach} reach, ${ratio.toFixed(1)}× la media.`;
-    }
+    primary = `${reach} account unici`;
+    const parts = [];
+    if (avgReach > 0) parts.push(`${ratio.toFixed(1)}× la media`);
+    if (replies > 0) parts.push(`${replies} DM`);
+    if (shares > 0) parts.push(`${shares} condivisioni`);
+    if (reactions > 0) parts.push(`${reactions} reazioni`);
+    secondary = parts.join(" · ");
   }
 
   const when = new Date(story.timestamp).toLocaleString("it-IT", {
@@ -493,13 +532,16 @@ function HighlightCard({ kind, story, avgReach }) {
       <div className="flex-1 min-w-0">
         <div
           className="inline-flex items-center gap-1.5 text-[10px] mono-font tracking-wider uppercase mb-1"
-          style={{ color: accent }}
+          style={{ color: variant.accent }}
         >
-          {icon}
-          {label}
+          {variant.icon}
+          {variant.label}
         </div>
         <div className="text-xs mono-font text-white/60 mb-1.5">{when}</div>
-        <p className="text-sm text-white/85 leading-relaxed">{verdict}</p>
+        <p className="text-sm text-white font-medium">{primary}</p>
+        {secondary && (
+          <p className="text-xs text-white/55 mono-font mt-1">{secondary}</p>
+        )}
       </div>
     </div>
   );

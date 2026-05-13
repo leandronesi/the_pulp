@@ -1132,6 +1132,8 @@ export default function App() {
 
               <Tabs.Content value="overview" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">
 
+            <TabQuestion text="sto crescendo?" />
+
             {/* Hero KPIs */}
             <section className="grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-4 mb-10 fadein">
               <KpiCard
@@ -1410,6 +1412,8 @@ export default function App() {
               </Tabs.Content>
 
               <Tabs.Content value="posts" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">
+
+            <TabQuestion text="cosa funziona?" />
 
             {/* Posts scope banner */}
             <div className="mb-6 flex items-baseline gap-3 flex-wrap">
@@ -1921,6 +1925,7 @@ export default function App() {
               </Tabs.Content>
 
               <Tabs.Content value="stories" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">
+                <TabQuestion text="sto parlando con i miei?" />
                 <StoriesTab
                   stories={stories}
                   storyHistory={storyHistory}
@@ -1929,6 +1934,8 @@ export default function App() {
               </Tabs.Content>
 
               <Tabs.Content value="audience" className="focus:outline-none data-[state=active]:animate-in data-[state=active]:fade-in data-[state=active]:duration-300">
+
+            <TabQuestion text="chi mi sta dietro?" />
 
             {/* Audience — lifetime disclaimer + panels */}
             <div className="mb-6 fadein">
@@ -2039,6 +2046,20 @@ export default function App() {
 // La maggior parte dei sub-componenti vive in src/components/ (estratti per
 // ridurre la dimensione di App.jsx). Qui resta solo TabTrigger perche' e'
 // strettamente legato alla struttura Tabs.List qui sopra.
+
+// TabQuestion — sottotitolo in italico Fraunces sopra il contenuto di ogni
+// tab. Riprende le 4 domande del pitch (slide 4): lega ogni sezione alla
+// domanda che risponde, così the Pulp capisce subito perché esiste la tab.
+function TabQuestion({ text }) {
+  return (
+    <p
+      className="text-sm italic text-[#EDE5D0]/65 mb-6 -mt-2"
+      style={{ fontFamily: "Fraunces, serif" }}
+    >
+      {text}
+    </p>
+  );
+}
 
 // TabTrigger — trigger stilato per Radix Tabs. Underline cream sulla tab
 // attiva (data-state=active), hover discreto sulle inattive.

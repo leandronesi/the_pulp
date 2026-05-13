@@ -351,6 +351,48 @@ export function deriveScatterMeta(posts) {
 // Quadranti per scatter reel-specifico (views × watch medio in secondi).
 // Aspetta in input punti {id, views, avgWatchSec}. Mediane come split
 // + threshold Tukey 1.5·IQR per evidenziare outlier "good".
+// Rileva ripartenza dell'account: il gap di pubblicazione più grande sopra
+// soglia (60g OR 5× la mediana dei gap). Se trovato, il post successivo al
+// gap è la "ripartenza" — i contenuti precedenti vivono in un'altra vita
+// dell'account (target, voice, audience diversi).
+//
+// Returns { restart_iso, restart_date_only, pause_days, ... } o null.
+// Stessa logica di scripts/report-deep.js — qui in src/ così sia il
+// dashboard sia gli script possono usarla.
+export function detectRestart(posts) {
+  if (!Array.isArray(posts) || posts.length < 3) return null;
+  const sorted = [...posts].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
+  const gaps = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const days =
+      (new Date(sorted[i].timestamp).getTime() -
+        new Date(sorted[i - 1].timestamp).getTime()) /
+      86400000;
+    gaps.push({ idx: i, days });
+  }
+  const med = median(gaps.map((g) => g.days));
+  const threshold = Math.max(60, med * 5);
+  const big = gaps
+    .filter((g) => g.days >= threshold)
+    .sort((a, b) => b.days - a.days)[0];
+  if (!big) return null;
+  const restartPost = sorted[big.idx];
+  return {
+    restart_iso: restartPost.timestamp,
+    restart_date_only: restartPost.timestamp.slice(0, 10),
+    pause_days: Math.round(big.days),
+    last_pre_pause_iso: sorted[big.idx - 1].timestamp,
+    first_ever_iso: sorted[0].timestamp,
+    days_since_restart: Math.floor(
+      (Date.now() - new Date(restartPost.timestamp).getTime()) / 86400000
+    ),
+    pre_pause_post_count: big.idx,
+    post_restart_count: sorted.length - big.idx,
+  };
+}
+
 export function deriveReelWatchMeta(points) {
   if (!Array.isArray(points) || !points.length) {
     return {

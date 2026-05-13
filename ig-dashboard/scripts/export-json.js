@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { createClient } from "@libsql/client";
 import { isFakeToken } from "../src/fakeData.js";
-import { derivePostAnalytics } from "../src/analytics.js";
+import { derivePostAnalytics, detectRestart } from "../src/analytics.js";
 import {
   createGql,
   loadCredentials,
@@ -221,23 +221,35 @@ async function fetchAudienceSmart(gql, ig) {
   return fetchAudienceFromGraph(gql, ig);
 }
 
-async function snapshotForRange(gql, ig, days) {
+async function snapshotForRange(gql, ig, days, restartUnix = null) {
   const until = Math.floor(Date.now() / 1000);
-  const since = until - days * DAY_SECONDS;
-  const sincePrev = until - 2 * days * DAY_SECONDS;
+  const rawSince = until - days * DAY_SECONDS;
+  // Clamp alla ripartenza: i giorni pre-rinascita sono un'altra vita
+  // dell'account (audience, voice, contesto diversi) e contaminano il numero.
+  // Se la finestra dichiarata inizia prima della ripartenza, accorciamo.
+  const since = restartUnix && restartUnix > rawSince ? restartUnix : rawSince;
+  const wasClamped = since !== rawSince;
+  const sincePrev = since - (until - since);
   const untilPrev = since;
+  // Se il periodo precedente cade interamente nel pre-rinascita, niente
+  // delta (sarebbe fuorviante).
+  const prevValid = !restartUnix || sincePrev >= restartUnix;
 
   const [cur, prev, reachDaily] = await Promise.all([
     fetchDayTotals(gql, ig, since, until),
-    fetchDayTotals(gql, ig, sincePrev, untilPrev),
+    prevValid
+      ? fetchDayTotals(gql, ig, sincePrev, untilPrev)
+      : Promise.resolve({ totals: {}, errors: [] }),
     fetchReachDaily(gql, ig, since, until),
   ]);
 
   return {
     totals: cur.totals,
-    totalsPrev: prev.totals,
+    totalsPrev: prevValid ? prev.totals : {},
     reachDaily,
     warnings: cur.errors,
+    sinceClamped: wasClamped ? since : null,
+    requestedDays: days,
   };
 }
 
@@ -265,10 +277,25 @@ async function main() {
   ]);
   const posts = mediaResp.posts;
 
+  // Restart detection: il gap di pubblicazione più grande sopra soglia ci
+  // dice da quando l'account è "vivo" (ADR detectRestart). Tutti i range
+  // vengono clampati a partire da qui — altrimenti i giorni di silenzio
+  // pre-rinascita gonfiano il denominatore.
+  const restart = detectRestart(posts);
+  if (restart) {
+    console.log(
+      `Restart rilevato: ripartenza ${restart.restart_date_only} dopo pausa di ${restart.pause_days}g · ` +
+        `${restart.pre_pause_post_count} post pre, ${restart.post_restart_count} post post`
+    );
+  }
+  const restartUnix = restart
+    ? Math.floor(new Date(restart.restart_iso).getTime() / 1000)
+    : null;
+
   const ranges = {};
   for (const d of RANGES) {
     console.log(`Range ${d}d…`);
-    ranges[d] = await snapshotForRange(gql, igUserId, d);
+    ranges[d] = await snapshotForRange(gql, igUserId, d, restartUnix);
   }
 
   // Storico opzionale da Turso (post_snapshot + daily_snapshot + stories)
@@ -282,6 +309,7 @@ async function main() {
     profile,
     posts,
     audience,
+    restart,
     ranges,
     postHistory,
     followerTrend,

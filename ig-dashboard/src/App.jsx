@@ -44,6 +44,7 @@ import {
   derivePostAnalytics,
   deriveReelWatchMeta,
   deriveScatterMeta,
+  detectRestart,
   isVideoLikeMedia,
   metricOf,
   postInteractions,
@@ -192,17 +193,40 @@ export default function App() {
 
   const isCustom = !!selection.customFrom && !!selection.customTo;
 
-  const { days, sinceUnix, untilUnix } = useMemo(() => {
+  // Clamp alla ripartenza: se l'account ha un restart rilevato e l'utente
+  // chiede un periodo che inizia prima, accorciamo la finestra. I giorni
+  // pre-rinascita sono un'altra vita dell'account (audience, target, voice
+  // diversi) e contaminano qualunque totale.
+  const restartUnix = useMemo(
+    () =>
+      restart?.restart_iso
+        ? Math.floor(new Date(restart.restart_iso).getTime() / 1000)
+        : null,
+    [restart]
+  );
+
+  const { days, sinceUnix, untilUnix, sinceClamped, requestedDays } = useMemo(() => {
+    let sUnix, uUnix, requested;
     if (isCustom) {
-      const sUnix = Math.floor(selection.customFrom.getTime() / 1000);
-      const uUnix = Math.floor(selection.customTo.getTime() / 1000);
-      const d = Math.max(1, Math.round((uUnix - sUnix) / 86400));
-      return { days: d, sinceUnix: sUnix, untilUnix: uUnix };
+      sUnix = Math.floor(selection.customFrom.getTime() / 1000);
+      uUnix = Math.floor(selection.customTo.getTime() / 1000);
+      requested = Math.max(1, Math.round((uUnix - sUnix) / 86400));
+    } else {
+      uUnix = Math.floor(Date.now() / 1000);
+      sUnix = uUnix - selection.preset * 86400;
+      requested = selection.preset;
     }
-    const uUnix = Math.floor(Date.now() / 1000);
-    const sUnix = uUnix - selection.preset * 86400;
-    return { days: selection.preset, sinceUnix: sUnix, untilUnix: uUnix };
-  }, [isCustom, selection]);
+    const clamped = restartUnix && restartUnix > sUnix;
+    const finalSince = clamped ? restartUnix : sUnix;
+    const effective = Math.max(1, Math.round((uUnix - finalSince) / 86400));
+    return {
+      days: effective,
+      sinceUnix: finalSince,
+      untilUnix: uUnix,
+      sinceClamped: clamped ? restartUnix : null,
+      requestedDays: requested,
+    };
+  }, [isCustom, selection, restartUnix]);
 
   const dateRange = days; // retrocompat nei label/memo
 
@@ -222,6 +246,10 @@ export default function App() {
   const [sortMode, setSortMode] = useState("reach");
   const [staticData, setStaticData] = useState(null);
   const [postHistory, setPostHistory] = useState({});
+  // Ripartenza account: il post dopo il gap più grande (vedi detectRestart).
+  // Quando presente, tutti i range vengono clampati per non includere giorni
+  // di silenzio pre-ripartenza che gonfiano i totali.
+  const [restart, setRestart] = useState(null);
   const [followerTrend, setFollowerTrend] = useState([]);
   const [stories, setStories] = useState([]);
   const [storyHistory, setStoryHistory] = useState({});
@@ -272,6 +300,7 @@ export default function App() {
           setPosts(data.posts || []);
           setAudience(data.audience);
           setPostHistory(data.postHistory || {});
+          setRestart(data.restart || null);
           setStories(data.stories || []);
           setStoryHistory(data.storyHistory || {});
           const daily = data.followerTrend || [];
@@ -423,15 +452,20 @@ export default function App() {
         const mediaUrl = `${API}/${igUserId}/media?fields=${mediaFields}&limit=30&access_token=${TOKEN}`;
         const mRes = await fetch(mediaUrl);
         const mData = await mRes.json();
+        let livePosts = [];
         if (mData.error) {
           warns.push(`media insights: ${mData.error.message}`);
           const fallback = await fetch(
             `${API}/${igUserId}/media?fields=id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count&limit=30&access_token=${TOKEN}`
           ).then((r) => r.json());
-          setPosts(fallback.data || []);
+          livePosts = fallback.data || [];
         } else {
-          setPosts(mData.data || []);
+          livePosts = mData.data || [];
         }
+        setPosts(livePosts);
+        // Restart detection lato browser: stessi 30 post che export-json
+        // riceve server-side, stessa logica (detectRestart in analytics.js).
+        setRestart(detectRestart(livePosts));
 
         // Audience demographics (lifetime breakdowns). Silenzioso: quasi tutti
         // gli account sotto i 100 follower engaged ricevono errore — non è un
@@ -517,6 +551,20 @@ export default function App() {
               if (daily.length) setFollowerTrend(daily);
               if (hist.postHistory && typeof hist.postHistory === "object") setPostHistory(hist.postHistory);
               if (hist.storyHistory && typeof hist.storyHistory === "object") setStoryHistory(hist.storyHistory);
+              // Audience fallback: usa il latest snapshot Turso se la Graph
+              // API live non ha popolato la sezione (errore silenzioso, sotto
+              // soglia engagement, o range pre-rinascita). L'audience è
+              // lifetime: lo snapshot di ieri è valido oggi.
+              if (
+                hist.audience &&
+                typeof hist.audience === "object" &&
+                Object.keys(hist.audience).length > 0
+              ) {
+                setAudience((cur) => {
+                  if (!cur || Object.keys(cur).length === 0) return hist.audience;
+                  return cur;
+                });
+              }
               // Sovrascrivi la lista stories con l'archivio Turso (Graph API
               // live ritorna solo le attive < 24h; Turso ha tutto lo storico).
               if (Array.isArray(hist.stories) && hist.stories.length > 0) {
@@ -1034,6 +1082,17 @@ export default function App() {
             />
           </div>
         </header>
+
+        {sinceClamped && (
+          <div className="mb-6 flex items-center gap-2 px-3 py-2 rounded-full bg-[#D4A85C]/10 border border-[#D4A85C]/20 text-[11px] mono-font text-[#D4A85C] w-fit">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#D4A85C]" />
+            finestra effettiva: dal {fmtDate(new Date(sinceClamped * 1000))}
+            {" · "}
+            <span className="text-white/60">
+              {days}g di {requestedDays}g · l'account ha ripreso il {fmtDate(restart.restart_iso)} dopo {restart.pause_days}g di pausa
+            </span>
+          </div>
+        )}
 
         {error && (
           <div className="glass rounded-2xl p-5 mb-6 border-red-500/30 flex items-start gap-3">

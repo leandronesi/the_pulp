@@ -597,10 +597,10 @@ export function StoryRow({ story, history, avgReach }) {
   const perStoryTier =
     avgReach > 0 && story.reach > 0
       ? reachRatio >= 1.3
-        ? { label: "forte", color: "#7FB3A3" }
+        ? { label: "sopra media", color: "#7FB3A3" }
         : reachRatio >= 0.8
-        ? { label: "media", color: "#D4A85C" }
-        : { label: "fiacca", color: "#D98B6F" }
+        ? { label: "in media", color: "#D4A85C" }
+        : { label: "sotto media", color: "#D98B6F" }
       : null;
 
   const dropOffLabel = story.dropOffHours
@@ -646,7 +646,7 @@ export function StoryRow({ story, history, avgReach }) {
             >
               {perStoryTier.label}
               <InfoTip
-                text={`Confronto del reach di questa story (${story.reach}) con la media del periodo (${Math.round(avgReach)}). Ratio ${reachRatio.toFixed(2)}×: ≥1.3 = forte, 0.8-1.3 = media, <0.8 = fiacca. Serve a leggere la singola story senza dover ricordare la media a memoria.`}
+                text={`Confronto del reach di questa story (${story.reach}) con la media del periodo (${Math.round(avgReach)}). Ratio ${reachRatio.toFixed(2)}×: ≥1.3 = sopra media, 0.8-1.3 = in media, <0.8 = sotto media. Serve a leggere la singola story senza dover ricordare la media a memoria.`}
                 side="top"
               />
             </span>

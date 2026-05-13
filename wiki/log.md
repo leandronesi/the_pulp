@@ -12,6 +12,18 @@ Tipi di kind:
 
 ---
 
+## [2026-05-13] fix | Restart-aware clamp, audience fallback Turso, tier stories non giudicanti
+
+L'utente ha segnalato 5 punti, 3 codificati qui (gli altri 2 sono UI già toccata + discussione di prodotto su tab Stories):
+
+**1. Clamp alla ripartenza dell'account.** Il dashboard mostrava ~20K reach sui 90gg, ma includeva ~22 giorni pre-rinascita (account dormiente dal giugno 2025 → marzo 2026, gap di 253g). Custom su marzo dava 0 perché Turso parte solo dal 23 aprile. Due metriche da fonti diverse (Graph API chunking vs Turso daily_snapshot) → numeri incoerenti per finestre antecedenti la ripartenza.
+
+Soluzione: `detectRestart()` esportato in `analytics.js` (riusato anche da `report-deep.js`), chiamato lato `export-json.js` (server-side, server-side restart finisce nel `data.json`) e lato `App.jsx` (live mode). Quando l'utente seleziona una finestra che inizia prima di `restart_iso`, `sinceUnix` viene clampato e il `data.ranges[N]` precomputato accorcia le chiamate Graph. Banner gold sotto l'header mostra "finestra effettiva: dal DD mmm · Ng di REQg".
+
+**2. Audience fallback Turso.** Il `/api/dev/history` ora include `audience` (latest snapshot da `audience_snapshot`). Quando Graph API live restituisce audience vuoto (errore silenzioso sotto soglia engagement, o range pre-rinascita), l'App fa fallback a quello Turso. In static mode `data.json` già include audience (server-side workflow): ridondante ma robusto.
+
+**3. Stories tier copy.** "fiacca / media / forte" → "sotto media / in media / sopra media". Descrittivo, niente giudizi di valore.
+
 ## [2026-05-08] feat | Scatter "reel quality" — views × watch medio
 
 Aggiunto secondo scatter sotto post analysis: solo reel del periodo con `video_view_total_time` non-null, asse X = views totali (latest), asse Y = watch medio per view (= vtt / views / 1000, secondi). Mediane come split → 4 quadranti:

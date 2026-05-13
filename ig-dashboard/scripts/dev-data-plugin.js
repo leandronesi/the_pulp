@@ -26,7 +26,7 @@ async function buildHistory() {
   if (!client) {
     return { error: "TURSO_DATABASE_URL non settata in .env" };
   }
-  const [dailyRes, postSnapRes, storyMetaRes, storySnapRes] = await Promise.all([
+  const [dailyRes, postSnapRes, storyMetaRes, storySnapRes, audienceRes] = await Promise.all([
     client.execute(
       `SELECT date, followers_count, follows_count, media_count,
               reach, profile_views, website_clicks,
@@ -52,6 +52,14 @@ async function buildHistory() {
        INNER JOIN story st ON st.story_id = s.story_id
        WHERE st.timestamp >= date('now', '-30 days')
        ORDER BY s.fetched_at ASC`
+    ),
+    // Audience: ultimo snapshot disponibile. La Graph API live a volte
+    // fallisce silenziosamente (account con engagement basso); avere
+    // l'archivio Turso come fallback evita la tab vuota.
+    client.execute(
+      `SELECT breakdown, key, value FROM audience_snapshot
+        WHERE date = (SELECT MAX(date) FROM audience_snapshot)
+        ORDER BY breakdown, value DESC`
     ),
   ]);
 
@@ -119,7 +127,14 @@ async function buildHistory() {
     };
   });
 
-  return { followerTrend, postHistory, storyHistory, stories };
+  const audience = {};
+  for (const r of audienceRes.rows) {
+    if (!audience[r.breakdown]) audience[r.breakdown] = [];
+    audience[r.breakdown].push({ key: r.key, value: Number(r.value) || 0 });
+  }
+  const audienceOut = Object.keys(audience).length ? audience : null;
+
+  return { followerTrend, postHistory, storyHistory, stories, audience: audienceOut };
 }
 
 export default function devDataPlugin() {

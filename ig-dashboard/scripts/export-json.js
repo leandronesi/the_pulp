@@ -31,10 +31,12 @@ const OUT_FILE = resolve(PUBLIC_DIR, "data.json");
 
 const { token: TOKEN, pageId: PAGE_ID } = await loadCredentials();
 
-// Solo 7 e 30: Meta espone unique veri (total_value, dedupe corretto) solo
-// fino a 30g. Sopra il chunking 28g + somma genera doppi conteggi e numeri
-// gonfiati — meglio mostrare niente che un numero sbagliato.
-const RANGES = [7, 30];
+// Niente più ranges precomputed via Graph API: il dashboard calcola tutti i
+// totali da `daily_snapshot` (somma reach giornaliero), stessa fonte per
+// 7g/30g/custom. Evita la discontinuità del numero quando si passa da
+// total_value (≤30g) a chunking (>30g) e la confusione tra metriche
+// diverse (unique cross-day vs account-giorni cumulati).
+const RANGES = [];
 const DAY_SECONDS = 86400;
 
 // Storico post + daily da Turso (facoltativo: se env assenti → ritorna vuoti,
@@ -295,11 +297,11 @@ async function main() {
     ? Math.floor(new Date(restart.restart_iso).getTime() / 1000)
     : null;
 
-  const ranges = {};
-  for (const d of RANGES) {
-    console.log(`Range ${d}d…`);
-    ranges[d] = await snapshotForRange(gql, igUserId, d, restartUnix);
-  }
+  const ranges = {}; // intenzionalmente vuoto, vedi nota su RANGES sopra
+  // suppress unused: snapshotForRange e RANGES restano nel codice per
+  // poter riattivare ranges precomputed se serve un giorno.
+  void snapshotForRange;
+  void RANGES;
 
   // Storico opzionale da Turso (post_snapshot + daily_snapshot + stories)
   const postIds = posts.map((p) => p.id);

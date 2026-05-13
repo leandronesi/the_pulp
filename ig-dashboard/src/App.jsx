@@ -210,7 +210,17 @@ export default function App() {
     [restart]
   );
 
-  const { days, sinceUnix, untilUnix, sinceClamped, requestedDays } = useMemo(() => {
+  // Primo daily_snapshot disponibile: se l'utente sceglie un custom che inizia
+  // prima del cron archive, i totali da daily-sum coprirebbero meno giorni di
+  // quelli dichiarati. UI lo segnala (banner "dati disponibili dal DD MMM").
+  const firstDailyUnix = useMemo(() => {
+    if (!followerTrend?.length) return null;
+    const first = followerTrend[0]?.date;
+    if (!first) return null;
+    return Math.floor(new Date(`${first}T00:00:00Z`).getTime() / 1000);
+  }, [followerTrend]);
+
+  const { days, sinceUnix, untilUnix, sinceClamped, clampReason, requestedDays } = useMemo(() => {
     let sUnix, uUnix, requested;
     if (isCustom) {
       sUnix = Math.floor(selection.customFrom.getTime() / 1000);
@@ -221,17 +231,37 @@ export default function App() {
       sUnix = uUnix - selection.preset * 86400;
       requested = selection.preset;
     }
-    const clamped = restartUnix && restartUnix > sUnix;
-    const finalSince = clamped ? restartUnix : sUnix;
+    // Due possibili clamp, prendiamo il più tardo (= la prima data per cui
+    // abbiamo dati reali). Reason ci serve per il banner di UI.
+    const restartHit = restartUnix && restartUnix > sUnix;
+    const dailyHit = firstDailyUnix && firstDailyUnix > sUnix;
+    let finalSince = sUnix;
+    let reason = null;
+    if (restartHit && dailyHit) {
+      if (firstDailyUnix >= restartUnix) {
+        finalSince = firstDailyUnix;
+        reason = "daily";
+      } else {
+        finalSince = restartUnix;
+        reason = "restart";
+      }
+    } else if (restartHit) {
+      finalSince = restartUnix;
+      reason = "restart";
+    } else if (dailyHit) {
+      finalSince = firstDailyUnix;
+      reason = "daily";
+    }
     const effective = Math.max(1, Math.round((uUnix - finalSince) / 86400));
     return {
       days: effective,
       sinceUnix: finalSince,
       untilUnix: uUnix,
-      sinceClamped: clamped ? restartUnix : null,
+      sinceClamped: reason ? finalSince : null,
+      clampReason: reason,
       requestedDays: requested,
     };
-  }, [isCustom, selection, restartUnix]);
+  }, [isCustom, selection, restartUnix, firstDailyUnix]);
 
   const dateRange = days; // retrocompat nei label/memo
 
@@ -307,40 +337,24 @@ export default function App() {
           const daily = data.followerTrend || [];
           setFollowerTrend(daily);
 
-          // Preset 7/30 → valori IG-unique precomputati (Graph API total_value,
-          // dedupe corretto fino a 30g). Custom ≤ 30g → daily-sum approssima
-          // ma è onesto su periodi brevi (overlap minore). Custom > 30g →
-          // niente totali: Meta non espone unique reali oltre 30g e qualunque
-          // calcolo client-side sarebbe gonfio.
-          const preset = selection.preset;
+          // Politica unica: totali sempre da daily_snapshot. Stesso metodo
+          // per 7g, 30g, custom. Niente più data.ranges precomputed via
+          // Graph API: davano numeri non-confrontabili col custom (unique
+          // vs cumulato) e gonfiavano oltre 30g (chunking).
           const span = untilUnix - sinceUnix;
-          if (preset && data.ranges?.[preset]) {
-            const range = data.ranges[preset];
-            setInsights({
-              totals: range.totals || {},
-              reachDaily: range.reachDaily || [],
-            });
-            setInsightsPrev({ totals: range.totalsPrev || {} });
-            setWarnings(range.warnings || []);
-          } else if (span <= 30 * 86400) {
-            setInsights({
-              totals: computeTotalsFromDaily(daily, sinceUnix, untilUnix),
-              reachDaily: filterReachDaily(daily, sinceUnix, untilUnix),
-            });
-            setInsightsPrev({
-              totals: computeTotalsFromDaily(
-                daily,
-                sinceUnix - span,
-                sinceUnix
-              ),
-            });
-            setWarnings([]);
-          } else {
-            // > 30g in custom: niente totali aggregati (vedi disclaimer UI).
-            setInsights({ totals: {}, reachDaily: [] });
-            setInsightsPrev({ totals: {} });
-            setWarnings([]);
-          }
+          setInsights({
+            totals: computeTotalsFromDaily(daily, sinceUnix, untilUnix),
+            reachDaily: filterReachDaily(daily, sinceUnix, untilUnix),
+            fromDailySum: true,
+          });
+          setInsightsPrev({
+            totals: computeTotalsFromDaily(
+              daily,
+              sinceUnix - span,
+              sinceUnix
+            ),
+          });
+          setWarnings([]);
         } catch (e) {
           setError(`Impossibile caricare data.json: ${e.message}`);
         } finally {
@@ -389,71 +403,14 @@ export default function App() {
         const sincePrev = since - span;
         const untilPrev = since;
 
-        // Graph API /insights espone unique veri (total_value, dedupe corretto)
-        // SOLO per finestre ≤ 30g. Sopra soglia non mostriamo totali aggregati:
-        // qualunque approssimazione (chunking 28g, sum daily) genera doppi
-        // conteggi che danno l'illusione di numeri più grandi del reale.
-        // Meglio onesto-vuoto che onesto-gonfio. I post restano visibili (la
-        // loro lista non risente del limite Meta).
-        const GRAPH_INSIGHTS_MAX_SPAN_S = 30 * 86400;
-        const totalsUnavailable = span > GRAPH_INSIGHTS_MAX_SPAN_S;
-
-        const metrics = [
-          "reach",
-          "profile_views",
-          "website_clicks",
-          "accounts_engaged",
-          "total_interactions",
-        ];
-
-        const fetchTotals = async (s, u, tag) => {
-          const out = {};
-          await Promise.all(
-            metrics.map(async (m) => {
-              try {
-                const url = `${API}/${igUserId}/insights?metric=${m}&metric_type=total_value&period=day&since=${s}&until=${u}&access_token=${TOKEN}`;
-                const r = await fetch(url);
-                const j = await r.json();
-                if (j.error) {
-                  if (tag === "cur") warns.push(`${m}: ${j.error.message}`);
-                  out[m] = null;
-                } else {
-                  out[m] = j.data?.[0]?.total_value?.value ?? 0;
-                }
-              } catch (e) {
-                if (tag === "cur") warns.push(`${m}: ${e.message}`);
-                out[m] = null;
-              }
-            })
-          );
-          return out;
-        };
-
-        if (totalsUnavailable) {
-          // Niente totali: span > 30g. I post arrivano sotto comunque.
-          setInsights({ totals: {}, reachDaily: [] });
-          setInsightsPrev({ totals: {} });
-        } else {
-          const [totals, totalsPrev] = await Promise.all([
-            fetchTotals(since, until, "cur"),
-            fetchTotals(sincePrev, untilPrev, "prev"),
-          ]);
-
-          // Reach daily time series (current period)
-          let reachDaily = [];
-          try {
-            const url = `${API}/${igUserId}/insights?metric=reach&period=day&since=${since}&until=${until}&access_token=${TOKEN}`;
-            const r = await fetch(url);
-            const j = await r.json();
-            if (!j.error) reachDaily = j.data?.[0]?.values || [];
-            else warns.push(`reach daily: ${j.error.message}`);
-          } catch (e) {
-            warns.push(`reach daily: ${e.message}`);
-          }
-
-          setInsights({ totals, reachDaily });
-          setInsightsPrev({ totals: totalsPrev });
-        }
+        // Politica unica: totali = somma daily_snapshot (Turso). Funziona
+        // identico per 7g, 30g e custom. Niente Graph API /insights con
+        // total_value (l'unique cross-day è dedupabile solo ≤30g e crea
+        // discontinuità del numero quando l'utente passa da 30 a 31g).
+        // Setter provvisori vuoti — vengono popolati quando /api/dev/history
+        // ci passa il daily_snapshot più giù in questo effect.
+        setInsights({ totals: {}, reachDaily: [], fromDailySum: true });
+        setInsightsPrev({ totals: {} });
 
         // Media + per-post insights
         const mediaFields =
@@ -579,11 +536,19 @@ export default function App() {
               if (Array.isArray(hist.stories) && hist.stories.length > 0) {
                 setStories(hist.stories);
               }
-              // Niente fallback "somma daily" per range > 30g: il numero
-              // sarebbe gonfiato (lo stesso utente in giorni diversi conta più
-              // volte). Lasciamo totali vuoti e mostriamo disclaimer in UI.
-              // Quando avremo accumulato abbastanza storia per ricostruire
-              // unique cross-day rivedremo (vedi TODO.md).
+              // Totali sempre da daily_snapshot: dato reale, ogni giorno
+              // ha unique 24h (vedi snapshot.js: rangeSinceUntil(1)).
+              // Sommare giorni indipendenti non contamina con pre-DB.
+              if (daily.length) {
+                setInsights({
+                  totals: computeTotalsFromDaily(daily, since, until),
+                  reachDaily: filterReachDaily(daily, since, until),
+                  fromDailySum: true,
+                });
+                setInsightsPrev({
+                  totals: computeTotalsFromDaily(daily, sincePrev, untilPrev),
+                });
+              }
             } else {
               warns.push(`history dev: ${hist.error}`);
             }
@@ -980,8 +945,12 @@ export default function App() {
   // Reach rate = reach del periodo / followers × 100
   const reachRate = useMemo(() => {
     if (!totals.reach || !account?.followers_count) return null;
+    // Il "X% dei follower" presuppone reach UNIQUE; sul cumulato è
+    // meaningless (su 90g può sforare 1000%). Nascondiamo il pill quando
+    // i totali vengono dal daily-sum (vedi insights.fromDailySum).
+    if (insights?.fromDailySum) return null;
     return (totals.reach / account.followers_count) * 100;
-  }, [totals.reach, account?.followers_count]);
+  }, [totals.reach, account?.followers_count, insights?.fromDailySum]);
 
   return (
     <RTooltip.Provider delayDuration={150} skipDelayDuration={300}>
@@ -1082,30 +1051,18 @@ export default function App() {
         </header>
 
         {sinceClamped && (
-          <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-full bg-[#D4A85C]/10 border border-[#D4A85C]/20 text-[11px] mono-font text-[#D4A85C] w-fit">
+          <div className="mb-6 flex items-center gap-2 px-3 py-2 rounded-full bg-[#D4A85C]/10 border border-[#D4A85C]/20 text-[11px] mono-font text-[#D4A85C] w-fit">
             <span className="w-1.5 h-1.5 rounded-full bg-[#D4A85C]" />
             finestra effettiva: dal {fmtDate(new Date(sinceClamped * 1000))}
             {" · "}
             <span className="text-white/60">
-              {days}g di {requestedDays}g · l'account ha ripreso il {fmtDate(restart.restart_iso)} dopo {restart.pause_days}g di pausa
+              {days}g di {requestedDays}g ·{" "}
+              {clampReason === "daily" &&
+                "i daily snapshot in archivio partono da qui"}
+              {clampReason === "restart" &&
+                restart &&
+                `l'account ha ripreso il ${fmtDate(restart.restart_iso)} dopo ${restart.pause_days}g di pausa`}
             </span>
-          </div>
-        )}
-
-        {days > 30 && (
-          <div className="mb-6 flex items-start gap-2 px-3 py-2 rounded-2xl bg-[#D98B6F]/10 border border-[#D98B6F]/20 text-[11px] mono-font text-[#D98B6F] max-w-3xl">
-            <AlertCircle size={13} className="shrink-0 mt-0.5" />
-            <div>
-              totali nascosti su finestre &gt; 30g
-              <span className="text-white/55">
-                {" — "}
-                Meta espone account unici dedup solo fino a 30 giorni. Sopra
-                soglia qualunque approssimazione (chunking, somma daily)
-                conterebbe lo stesso utente più volte. Mostriamo solo dati
-                onesti: la lista post resta visibile, gli aggregati no.
-                Usa 7d/30d per i KPI quantitativi.
-              </span>
-            </div>
           </div>
         )}
 
@@ -1267,7 +1224,7 @@ export default function App() {
               />
               <RateCard
                 icon={<TrendingUp size={14} />}
-                label="Reach"
+                label={insights?.fromDailySum ? "Reach (cumulato)" : "Reach"}
                 value={fmt(totals.reach)}
                 deltaPct={delta(totals.reach, totalsPrev.reach)}
                 tier={reachRateTier(reachRate)}
@@ -1276,7 +1233,11 @@ export default function App() {
                     ? `${reachRate.toFixed(0)}% dei follower`
                     : null
                 }
-                info={`Account UNICI che hanno visto almeno un contenuto negli ultimi ${dateRange} giorni. Un utente che vede 10 post conta 1 (dedupe automatico Meta). Il pill "X% dei follower" è il reach rate: quanto hai bucato la cerchia. Viral >100%, strong 30-100%, normal 10-30%, low <10%.`}
+                info={
+                  insights?.fromDailySum
+                    ? `Somma del reach giornaliero dei ${dateRange} giorni in finestra (dato cumulato dal nostro archivio Turso). Ogni giorno conta i suoi unique 24h: chi ti vede sia lunedì che martedì viene contato due volte. Non è "account UNICI cross-periodo" — quel numero IG lo espone solo a 30g via Graph API. Su finestre brevi (< 7g) i due numeri sono molto simili; su finestre lunghe il cumulato è più alto, di un fattore = numero medio di giorni in cui un utente ti rivede.`
+                    : `Account UNICI che hanno visto almeno un contenuto negli ultimi ${dateRange} giorni. Un utente che vede 10 post conta 1 (dedupe automatico Meta).`
+                }
               />
               <RateCard
                 icon={<Activity size={14} />}

@@ -12,6 +12,16 @@ Tipi di kind:
 
 ---
 
+## [2026-05-13] fix | Totali sempre da daily_snapshot + clamp coverage DB
+
+Versione finale dopo round di iterazione con l'utente. Il vincolo è "i numeri devono tornare sempre e il custom deve poter andare indietro fino a dove abbiamo dati":
+
+- **Politica unica per i totali**: somma `daily_snapshot` da Turso, identico metodo per 7g / 30g / custom. Niente più Graph API `total_value` mescolato con `computeTotalsFromDaily`: davano due metriche diverse (unique cross-day vs account-giorni cumulati) e creavano la discontinuità di scala che l'utente ha colto al passaggio 30→90g.
+- **Clamp doppio**: `sinceUnix = max(richiesto, restartUnix, firstDailyUnix)`. Banner unico "finestra effettiva: dal DD MMM · Ng di REQg · l'account ha ripreso il X / i daily snapshot partono da qui".
+- **Label cumulato**: card "Reach (cumulato)" quando viene da daily-sum (sempre, in pratica), tooltip che spiega chiaramente "ogni giorno conta i suoi unique 24h, chi ti vede in più giorni viene contato più volte". Pill "% dei follower" nascosto sul cumulato (sforerebbe 1000% su finestre lunghe).
+- **export-json.js**: `RANGES = []` (era `[7, 30]`), niente più ranges precomputed via Graph API nel `data.json`. Il dashboard usa `data.followerTrend` (`daily_snapshot` archive) per qualunque finestra.
+- **Onesti su cosa abbiamo**: ogni `daily_snapshot.reach` è generato da `rangeSinceUntil(1)` lato cron (finestra 24h rolling) → sommare giorni indipendenti non contamina con pre-DB. Quando il DB cresce, il custom si allarga automaticamente.
+
 ## [2026-05-13] fix | Niente totali stimati oltre 30g — onesto-vuoto > onesto-gonfio
 
 Decisione di principio dopo aver visto i numeri:

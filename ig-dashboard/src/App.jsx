@@ -180,13 +180,13 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [warnings, setWarnings] = useState([]);
-  // Selezione periodo: preset (7/30/90) o custom (da/a date picker).
-  // In static mode i 3 preset leggono `data.ranges[N]` (precomputato dal workflow,
-  // valori IG-unique corretti); il custom calcola al volo dai daily_snapshot
-  // (somma per giorno, vedi computeTotalsFromDaily — caveat sui unique).
+  // Selezione periodo: preset numerico (7, 30), preset speciale "tot"
+  // (dall'inizio della memoria — restart o primo daily — fino a oggi) o
+  // custom (da/a date picker). Default: "tot", così il dashboard apre
+  // mostrando tutta la storia disponibile.
   const [selection, setSelection] = useState({
-    preset: 30,
-    customFrom: null, // Date o null
+    preset: "tot",
+    customFrom: null,
     customTo: null,
   });
   const [customOpen, setCustomOpen] = useState(false);
@@ -226,35 +226,48 @@ export default function App() {
 
   const { days, sinceUnix, untilUnix, sinceClamped, clampReason, requestedDays } = useMemo(() => {
     let sUnix, uUnix, requested;
+    const isTot = !isCustom && selection.preset === "tot";
     if (isCustom) {
       sUnix = Math.floor(selection.customFrom.getTime() / 1000);
       uUnix = Math.floor(selection.customTo.getTime() / 1000);
       requested = Math.max(1, Math.round((uUnix - sUnix) / 86400));
+    } else if (isTot) {
+      // "Tot": dall'inizio della memoria (restart o primo daily, il più
+      // tardo dei due) fino a oggi. Niente concetto di "richiesti": è
+      // tutto quello che abbiamo.
+      uUnix = Math.floor(Date.now() / 1000);
+      const candidates = [restartUnix, firstDailyUnix].filter(Boolean);
+      sUnix = candidates.length
+        ? Math.max(...candidates)
+        : uUnix - 30 * 86400;
+      requested = null;
     } else {
       uUnix = Math.floor(Date.now() / 1000);
       sUnix = uUnix - selection.preset * 86400;
       requested = selection.preset;
     }
-    // Due possibili clamp, prendiamo il più tardo (= la prima data per cui
-    // abbiamo dati reali). Reason ci serve per il banner di UI.
-    const restartHit = restartUnix && restartUnix > sUnix;
-    const dailyHit = firstDailyUnix && firstDailyUnix > sUnix;
+    // Clamp solo per preset numerici / custom. Per "tot" il clamp è già
+    // applicato a monte dal calcolo di sUnix, quindi non serve banner.
     let finalSince = sUnix;
     let reason = null;
-    if (restartHit && dailyHit) {
-      if (firstDailyUnix >= restartUnix) {
-        finalSince = firstDailyUnix;
-        reason = "daily";
-      } else {
+    if (!isTot) {
+      const restartHit = restartUnix && restartUnix > sUnix;
+      const dailyHit = firstDailyUnix && firstDailyUnix > sUnix;
+      if (restartHit && dailyHit) {
+        if (firstDailyUnix >= restartUnix) {
+          finalSince = firstDailyUnix;
+          reason = "daily";
+        } else {
+          finalSince = restartUnix;
+          reason = "restart";
+        }
+      } else if (restartHit) {
         finalSince = restartUnix;
         reason = "restart";
+      } else if (dailyHit) {
+        finalSince = firstDailyUnix;
+        reason = "daily";
       }
-    } else if (restartHit) {
-      finalSince = restartUnix;
-      reason = "restart";
-    } else if (dailyHit) {
-      finalSince = firstDailyUnix;
-      reason = "daily";
     }
     const effective = Math.max(1, Math.round((uUnix - finalSince) / 86400));
     return {
@@ -1053,7 +1066,17 @@ export default function App() {
           </div>
         </header>
 
-        {sinceClamped && (
+        {/* Banner periodo: in 'tot' mostro solo "account attivo dal X"
+            (l'utente sa che è tutta la memoria, niente altro); con preset
+            numerico o custom + clamp, mostro la finestra effettiva e il
+            motivo per cui è stata accorciata. */}
+        {selection.preset === "tot" && restart && (
+          <div className="mb-6 flex items-center gap-2 px-3 py-2 rounded-full bg-[#D4A85C]/10 border border-[#D4A85C]/20 text-[11px] mono-font text-[#D4A85C] w-fit">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#D4A85C]" />
+            account attivo dal {fmtDate(restart.restart_iso)}
+          </div>
+        )}
+        {selection.preset !== "tot" && sinceClamped && (
           <div className="mb-6 flex items-center gap-2 px-3 py-2 rounded-full bg-[#D4A85C]/10 border border-[#D4A85C]/20 text-[11px] mono-font text-[#D4A85C] w-fit">
             <span className="w-1.5 h-1.5 rounded-full bg-[#D4A85C]" />
             finestra effettiva: dal {fmtDate(new Date(sinceClamped * 1000))}
@@ -1064,7 +1087,7 @@ export default function App() {
                 "i daily snapshot in archivio partono da qui"}
               {clampReason === "restart" &&
                 restart &&
-                `l'account ha ripreso il ${fmtDate(restart.restart_iso)} dopo ${restart.pause_days}g di pausa`}
+                `account attivo dal ${fmtDate(restart.restart_iso)}`}
             </span>
           </div>
         )}

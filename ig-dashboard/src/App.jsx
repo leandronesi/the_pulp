@@ -1136,43 +1136,54 @@ export default function App() {
 
             {/* Hero KPIs */}
             <section className="grid grid-cols-1 min-[480px]:grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-4 mb-10 fadein">
-              <KpiCard
-                icon={<Users size={16} />}
-                label="Followers"
-                value={fmt(account.followers_count)}
-                sparkline={(() => {
-                  // Filtro per il dateRange attivo: la curva deve seguire il
-                  // filtro come il resto della dashboard. Le date in
-                  // followerTrend sono YYYY-MM-DD (Europe/Rome).
-                  const sinceMs = sinceUnix * 1000;
-                  const untilMs = untilUnix * 1000;
-                  const base = followerTrend
-                    .filter((d) => {
-                      const t = new Date(`${d.date}T00:00:00Z`).getTime();
-                      return t >= sinceMs && t <= untilMs;
-                    })
-                    .map((d) => ({
-                      reach: d.followers,
-                      date: fmtDate(d.date),
-                    }));
-                  const live = account.followers_count;
-                  // Appendi il valore live in coda se il periodo include oggi
-                  // e l'ultimo daily è diverso dal numero live (la curva
-                  // chiude sul valore mostrato nel KPI).
-                  const includesToday = untilMs >= Date.now() - 86400000;
-                  if (
-                    includesToday &&
-                    live != null &&
-                    base.length > 0 &&
-                    base[base.length - 1].reach !== live
-                  ) {
-                    return [...base, { reach: live, date: "ora" }];
-                  }
-                  return base;
-                })()}
-                accent="from-[#EDE5D0] to-[#D4A85C]"
-                info="Follower attuali. La piccola curva sotto mostra come il numero cambia giorno per giorno (serve ≥2 giorni di dati per apparire). La Graph API non dà lo storico: ce lo costruiamo noi."
-              />
+              {(() => {
+                // Calcolo follower-trend filtrato + delta nel periodo.
+                // Il delta è (valore live attuale − primo daily nel range);
+                // se manca il primo daily, niente delta (non l'inventiamo).
+                const sinceMs = sinceUnix * 1000;
+                const untilMs = untilUnix * 1000;
+                const inRange = followerTrend.filter((d) => {
+                  const t = new Date(`${d.date}T00:00:00Z`).getTime();
+                  return t >= sinceMs && t <= untilMs;
+                });
+                const live = account.followers_count;
+                const base = inRange.map((d) => ({
+                  reach: d.followers,
+                  date: fmtDate(d.date),
+                }));
+                const includesToday = untilMs >= Date.now() - 86400000;
+                const spark =
+                  includesToday &&
+                  live != null &&
+                  base.length > 0 &&
+                  base[base.length - 1].reach !== live
+                    ? [...base, { reach: live, date: "ora" }]
+                    : base;
+
+                const firstFollowers = inRange[0]?.followers;
+                const delta =
+                  live != null && firstFollowers != null
+                    ? live - firstFollowers
+                    : null;
+                const sub =
+                  delta != null
+                    ? `${delta >= 0 ? "+" : ""}${delta} ${
+                        Math.abs(delta) === 1 ? "follower" : "follower"
+                      } negli ultimi ${days}g`
+                    : null;
+
+                return (
+                  <KpiCard
+                    icon={<Users size={16} />}
+                    label="Followers"
+                    value={fmt(live)}
+                    subtitle={sub}
+                    sparkline={spark}
+                    accent="from-[#EDE5D0] to-[#D4A85C]"
+                    info="Follower attuali. Sotto il numero, il delta nel periodo selezionato (calcolato dal primo daily disponibile a oggi). La curva mostra il giorno-per-giorno; la Graph API non dà lo storico, ce lo costruiamo noi."
+                  />
+                );
+              })()}
               <KpiCard
                 icon={<Film size={16} />}
                 label={`Reels · ${dateRange}g`}

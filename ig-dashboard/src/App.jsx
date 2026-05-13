@@ -190,6 +190,11 @@ export default function App() {
     customTo: null,
   });
   const [customOpen, setCustomOpen] = useState(false);
+  // Ripartenza account: il post dopo il gap più grande (vedi detectRestart).
+  // Quando presente, tutti i range vengono clampati per non includere giorni
+  // di silenzio pre-ripartenza che gonfiano i totali. Dichiarato qui prima
+  // dei useMemo che lo consumano per evitare TDZ.
+  const [restart, setRestart] = useState(null);
 
   const isCustom = !!selection.customFrom && !!selection.customTo;
 
@@ -246,10 +251,6 @@ export default function App() {
   const [sortMode, setSortMode] = useState("reach");
   const [staticData, setStaticData] = useState(null);
   const [postHistory, setPostHistory] = useState({});
-  // Ripartenza account: il post dopo il gap più grande (vedi detectRestart).
-  // Quando presente, tutti i range vengono clampati per non includere giorni
-  // di silenzio pre-ripartenza che gonfiano i totali.
-  const [restart, setRestart] = useState(null);
   const [followerTrend, setFollowerTrend] = useState([]);
   const [stories, setStories] = useState([]);
   const [storyHistory, setStoryHistory] = useState({});

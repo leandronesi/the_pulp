@@ -195,6 +195,10 @@ export default function App() {
   // di silenzio pre-ripartenza che gonfiano i totali. Dichiarato qui prima
   // dei useMemo che lo consumano per evitare TDZ.
   const [restart, setRestart] = useState(null);
+  // Dichiarato qui (prima dei useMemo che lo leggono) per evitare TDZ. Gli
+  // altri state della finestra rimangono più sotto perché non entrano nei
+  // calcoli di sinceUnix/clamp.
+  const [followerTrend, setFollowerTrend] = useState([]);
 
   const isCustom = !!selection.customFrom && !!selection.customTo;
 
@@ -281,7 +285,6 @@ export default function App() {
   const [sortMode, setSortMode] = useState("reach");
   const [staticData, setStaticData] = useState(null);
   const [postHistory, setPostHistory] = useState({});
-  const [followerTrend, setFollowerTrend] = useState([]);
   const [stories, setStories] = useState([]);
   const [storyHistory, setStoryHistory] = useState({});
 

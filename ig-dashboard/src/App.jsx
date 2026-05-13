@@ -35,7 +35,6 @@ import {
   CircleDot,
   Layers,
   Image as ImageIcon,
-  Video,
 } from "lucide-react";
 import { TOKEN, PAGE_ID, API } from "./config.js";
 import { generateFakeData, isFakeToken } from "./fakeData.js";
@@ -1494,12 +1493,12 @@ export default function App() {
                     </p>
                   </div>
                 </div>
-                {/* 4 tile per tipo (Reels, Carousel, Foto, Video) — sempre tutti
+                {/* 3 tile per tipo (Reels, Carousel, Foto) — sempre tutti
                     visibili anche con count=0, per segnalare assenze esplicite.
                     Sotto al count, una riga descrittiva di cosa IG misura per
                     quel format — è la "grammatica" del pitch (no consigli,
-                    solo come funziona). */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    solo come funziona). Video feed escluso: deprecato su IG. */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {[
                     {
                       type: "REELS",
@@ -1515,11 +1514,6 @@ export default function App() {
                       type: "IMAGE",
                       icon: <ImageIcon size={18} className="text-white/60" />,
                       grammar: "qui conta chi si ferma a guardare",
-                    },
-                    {
-                      type: "VIDEO",
-                      icon: <Video size={18} className="text-white/60" />,
-                      grammar: "formato in disuso su IG 2026",
                     },
                   ].map(({ type, icon, grammar }) => {
                     const m = contentMix.find((x) => x.type === type) || { type, count: 0, avgReach: 0, avgEr: 0 };

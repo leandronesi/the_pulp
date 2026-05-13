@@ -61,7 +61,10 @@ export function DateRangeSelector({
 
   return (
     <div className="glass rounded-3xl sm:rounded-full px-2 py-1 flex flex-wrap sm:flex-nowrap items-center gap-1 w-full sm:w-auto">
-      {[7, 30, 90].map((d) => {
+      {/* Solo 7d e 30d: Meta espone unique veri (total_value) fino a 30g.
+          Sopra è chunking + somma → doppi conteggi, numero gonfiato.
+          Per finestre più lunghe → custom, con disclaimer onesto sui totali. */}
+      {[7, 30].map((d) => {
         const active = !isCustom && selection.preset === d;
         return (
           <button

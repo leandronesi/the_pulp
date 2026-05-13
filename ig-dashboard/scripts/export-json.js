@@ -31,7 +31,10 @@ const OUT_FILE = resolve(PUBLIC_DIR, "data.json");
 
 const { token: TOKEN, pageId: PAGE_ID } = await loadCredentials();
 
-const RANGES = [7, 30, 90];
+// Solo 7 e 30: Meta espone unique veri (total_value, dedupe corretto) solo
+// fino a 30g. Sopra il chunking 28g + somma genera doppi conteggi e numeri
+// gonfiati — meglio mostrare niente che un numero sbagliato.
+const RANGES = [7, 30];
 const DAY_SECONDS = 86400;
 
 // Storico post + daily da Turso (facoltativo: se env assenti → ritorna vuoti,

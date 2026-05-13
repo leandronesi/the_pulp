@@ -307,9 +307,13 @@ export default function App() {
           const daily = data.followerTrend || [];
           setFollowerTrend(daily);
 
-          // Preset 7/30/90 → valori IG-unique precomputati (corretti).
-          // Custom → somma per giorno dai daily_snapshot (approssimazione).
+          // Preset 7/30 → valori IG-unique precomputati (Graph API total_value,
+          // dedupe corretto fino a 30g). Custom ≤ 30g → daily-sum approssima
+          // ma è onesto su periodi brevi (overlap minore). Custom > 30g →
+          // niente totali: Meta non espone unique reali oltre 30g e qualunque
+          // calcolo client-side sarebbe gonfio.
           const preset = selection.preset;
+          const span = untilUnix - sinceUnix;
           if (preset && data.ranges?.[preset]) {
             const range = data.ranges[preset];
             setInsights({
@@ -318,8 +322,7 @@ export default function App() {
             });
             setInsightsPrev({ totals: range.totalsPrev || {} });
             setWarnings(range.warnings || []);
-          } else {
-            const span = untilUnix - sinceUnix;
+          } else if (span <= 30 * 86400) {
             setInsights({
               totals: computeTotalsFromDaily(daily, sinceUnix, untilUnix),
               reachDaily: filterReachDaily(daily, sinceUnix, untilUnix),
@@ -331,6 +334,11 @@ export default function App() {
                 sinceUnix
               ),
             });
+            setWarnings([]);
+          } else {
+            // > 30g in custom: niente totali aggregati (vedi disclaimer UI).
+            setInsights({ totals: {}, reachDaily: [] });
+            setInsightsPrev({ totals: {} });
             setWarnings([]);
           }
         } catch (e) {
@@ -381,13 +389,14 @@ export default function App() {
         const sincePrev = since - span;
         const untilPrev = since;
 
-        // Graph API /insights non accetta finestre > 30g (#100). Sopra soglia
-        // calcoliamo totali e reach daily dal daily_snapshot di Turso (caricato
-        // via /api/dev/history più sotto) — l'unica fonte che ha lo storico
-        // oltre 30g. La conseguenza: i totali sono sum-of-daily (≠ unique
-        // mensile reale), già etichettati con "*" via computeTotalsFromDaily.
+        // Graph API /insights espone unique veri (total_value, dedupe corretto)
+        // SOLO per finestre ≤ 30g. Sopra soglia non mostriamo totali aggregati:
+        // qualunque approssimazione (chunking 28g, sum daily) genera doppi
+        // conteggi che danno l'illusione di numeri più grandi del reale.
+        // Meglio onesto-vuoto che onesto-gonfio. I post restano visibili (la
+        // loro lista non risente del limite Meta).
         const GRAPH_INSIGHTS_MAX_SPAN_S = 30 * 86400;
-        const useDbForTotals = span > GRAPH_INSIGHTS_MAX_SPAN_S;
+        const totalsUnavailable = span > GRAPH_INSIGHTS_MAX_SPAN_S;
 
         const metrics = [
           "reach",
@@ -420,9 +429,8 @@ export default function App() {
           return out;
         };
 
-        if (useDbForTotals) {
-          // Setter provvisori vuoti — vengono sovrascritti dopo che
-          // /api/dev/history (più sotto) ci passa daily_snapshot.
+        if (totalsUnavailable) {
+          // Niente totali: span > 30g. I post arrivano sotto comunque.
           setInsights({ totals: {}, reachDaily: [] });
           setInsightsPrev({ totals: {} });
         } else {
@@ -571,25 +579,14 @@ export default function App() {
               if (Array.isArray(hist.stories) && hist.stories.length > 0) {
                 setStories(hist.stories);
               }
-              // Fallback per i range > 30g: la Graph API rifiuta, calcoliamo
-              // da daily_snapshot. computeTotalsFromDaily/filterReachDaily
-              // accettano lo stesso formato di hist.followerTrend.
-              if (useDbForTotals && daily.length) {
-                setInsights({
-                  totals: computeTotalsFromDaily(daily, since, until),
-                  reachDaily: filterReachDaily(daily, since, until),
-                });
-                setInsightsPrev({
-                  totals: computeTotalsFromDaily(daily, sincePrev, untilPrev),
-                });
-              }
+              // Niente fallback "somma daily" per range > 30g: il numero
+              // sarebbe gonfiato (lo stesso utente in giorni diversi conta più
+              // volte). Lasciamo totali vuoti e mostriamo disclaimer in UI.
+              // Quando avremo accumulato abbastanza storia per ricostruire
+              // unique cross-day rivedremo (vedi TODO.md).
             } else {
               warns.push(`history dev: ${hist.error}`);
             }
-          } else if (useDbForTotals) {
-            warns.push(
-              "Range > 30g: serve TURSO_DATABASE_URL in .env (Graph API limitata a 30g)."
-            );
           }
         } catch {
           // /api/dev/history non disponibile (e.g. build statico) — silent
@@ -1085,13 +1082,30 @@ export default function App() {
         </header>
 
         {sinceClamped && (
-          <div className="mb-6 flex items-center gap-2 px-3 py-2 rounded-full bg-[#D4A85C]/10 border border-[#D4A85C]/20 text-[11px] mono-font text-[#D4A85C] w-fit">
+          <div className="mb-3 flex items-center gap-2 px-3 py-2 rounded-full bg-[#D4A85C]/10 border border-[#D4A85C]/20 text-[11px] mono-font text-[#D4A85C] w-fit">
             <span className="w-1.5 h-1.5 rounded-full bg-[#D4A85C]" />
             finestra effettiva: dal {fmtDate(new Date(sinceClamped * 1000))}
             {" · "}
             <span className="text-white/60">
               {days}g di {requestedDays}g · l'account ha ripreso il {fmtDate(restart.restart_iso)} dopo {restart.pause_days}g di pausa
             </span>
+          </div>
+        )}
+
+        {days > 30 && (
+          <div className="mb-6 flex items-start gap-2 px-3 py-2 rounded-2xl bg-[#D98B6F]/10 border border-[#D98B6F]/20 text-[11px] mono-font text-[#D98B6F] max-w-3xl">
+            <AlertCircle size={13} className="shrink-0 mt-0.5" />
+            <div>
+              totali nascosti su finestre &gt; 30g
+              <span className="text-white/55">
+                {" — "}
+                Meta espone account unici dedup solo fino a 30 giorni. Sopra
+                soglia qualunque approssimazione (chunking, somma daily)
+                conterebbe lo stesso utente più volte. Mostriamo solo dati
+                onesti: la lista post resta visibile, gli aggregati no.
+                Usa 7d/30d per i KPI quantitativi.
+              </span>
+            </div>
           </div>
         )}
 

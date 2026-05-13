@@ -12,6 +12,26 @@ Tipi di kind:
 
 ---
 
+## [2026-05-13] fix | Niente totali stimati oltre 30g — onesto-vuoto > onesto-gonfio
+
+Decisione di principio dopo aver visto i numeri:
+
+- 7d reach=4.203 (Graph total_value, unique veri)
+- 30d reach=7.684 (Graph total_value, unique veri)
+- 90d reach=19.817 (chunking 3×28g + somma → doppi conteggi tra chunks)
+
+Salto 30→90 di 2.6× non era un bug, era il limite onesto di Meta: il `total_value` accetta finestre ≤ 30g. Sopra dobbiamo spezzettare e sommare → lo stesso utente che ti vede in chunk-1 e chunk-2 viene contato due volte. Lo stesso vale per `computeTotalsFromDaily` su Turso (somma daily reach, account in 2 giorni conta 2).
+
+Politica nuova: **niente numeri approssimati**. Meglio "—" che un numero gonfio.
+
+- `RANGES = [7, 30]` in `export-json.js` (era `[7, 30, 90]`).
+- DateRangeSelector: rimosso il chip 90d. Restano 7d, 30d, custom.
+- App.jsx: per `span > 30g` (static o live), `totals = {}` e i KPI top mostrano "—" (il formatter già gestisce null/undefined). Disclaimer terracotta sotto l'header spiega perché.
+- I post nella griglia + scatter restano visibili anche oltre 30g (filtrati per timestamp, non per totali aggregati).
+- `daily.length` resta utile per la curva follower (segmento storico onesto), non per ricostruire reach mensile.
+
+Quando avremo abbastanza storia per ricostruire unique cross-day (servirà cookie-level data, che IG non espone) potremo riconsiderare. Per ora niente fantasia.
+
 ## [2026-05-13] feat | Stories tab orientata al verdetto
 
 Tab Stories: meno scaffold tecnico, più "cosa ti porti a casa".

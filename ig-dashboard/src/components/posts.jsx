@@ -226,10 +226,10 @@ export function PostCard({ post, rank }) {
           <div className="mt-3 pt-3 border-t border-white/5">
             <div className="flex items-center justify-between gap-3 mb-2">
               <div className="text-[9px] text-white/30 mono-font uppercase tracking-wider">
-                timeline 7g
+                primi 7 giorni
               </div>
-              <div className="text-[9px] text-white/40 mono-font uppercase tracking-wider">
-                {post.observedDays}/7g osservati
+              <div className="text-[10px] text-white/45 italic" style={{ fontFamily: "Fraunces, serif" }}>
+                osservato per {post.observedDays} {post.observedDays === 1 ? "giorno" : "giorni"}
               </div>
             </div>
             <LifecycleMiniChart data={post.lifecycleSeries} />

@@ -1979,6 +1979,7 @@ export default function App() {
                       U: "#EDE5D0",
                     }}
                     labelMap={{ F: "Donne", M: "Uomini", U: "Non spec." }}
+                    followersTotal={account?.followers_count}
                   />
                 )}
                 {audience.age && (
@@ -1987,16 +1988,23 @@ export default function App() {
                     title="Età"
                     data={audience.age}
                     colors={null}
+                    followersTotal={account?.followers_count}
                   />
                 )}
-                {(audience.city || audience.country) && (
-                  <AudiencePanel
-                    icon={<Globe2 size={16} />}
-                    title={audience.city ? "Top città" : "Top paesi"}
-                    data={(audience.city || audience.country).slice(0, 6)}
-                    colors={null}
-                  />
-                )}
+                {(audience.city || audience.country) && (() => {
+                  const full = audience.city || audience.country;
+                  const mappedTotal = full.reduce((s, r) => s + (r.value || 0), 0);
+                  return (
+                    <AudiencePanel
+                      icon={<Globe2 size={16} />}
+                      title={audience.city ? "Top città" : "Top paesi"}
+                      data={full.slice(0, 6)}
+                      colors={null}
+                      followersTotal={account?.followers_count}
+                      mappedTotal={mappedTotal}
+                    />
+                  );
+                })()}
               </div>
             ) : (
               <div className="glass rounded-3xl p-8 sm:p-12 text-center mb-10">
